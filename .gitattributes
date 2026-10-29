@@ -1,0 +1,8 @@
+# 统一仓库内换行符为 LF（Windows 开发、Linux 容器运行的一致性保障）
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
