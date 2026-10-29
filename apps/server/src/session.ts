@@ -7,8 +7,29 @@
  * 桥接方式：pending Map 存 resolver，approve 端点命中后 resolve。
  */
 import { PermissionEngine, type ToolUsePart, type WMessage } from '@water/core';
+import type { TaskRow } from './persistence.js';
 
 export type ApprovalDecision = 'once' | 'session' | 'deny';
+
+/** 任务 = 一次消息处理（Agent Loop 运行）的记录，供任务页展示 */
+export interface TaskStep {
+  tool: string;
+  summary: string;
+  ok: boolean | null;   // null = 被拒绝/阻止
+  durationMs: number;
+}
+
+export interface TaskRecord {
+  id: string;
+  sessionId: string;
+  title: string;
+  startedAt: number;
+  finishedAt: number;
+  status: 'done' | 'error' | 'aborted' | 'max_turns';
+  steps: TaskStep[];
+  tokensIn: number;
+  tokensOut: number;
+}
 
 interface PendingApproval {
   call: ToolUsePart;
@@ -54,6 +75,7 @@ export class Session {
 
 export class SessionStore {
   private sessions = new Map<string, Session>();
+  private tasks: TaskRecord[] = [];
 
   constructor(private persistence?: import('./persistence.js').SessionPersistence) {
     // 启动恢复：从 SQLite 读回历史会话
@@ -64,7 +86,33 @@ export class SessionStore {
       s.messages = r.messages;
       this.sessions.set(r.id, s);
     }
+    // 恢复任务记录
+    for (const t of persistence?.loadTasks() ?? []) {
+      this.tasks.push({
+        id: t.id, sessionId: t.session_id, title: t.title,
+        startedAt: t.started_at, finishedAt: t.finished_at,
+        status: t.status as TaskRecord['status'],
+        steps: JSON.parse(t.steps) as TaskStep[],
+        tokensIn: t.tokens_in, tokensOut: t.tokens_out,
+      });
+    }
   }
+
+  addTask(t: TaskRecord): void {
+    this.tasks.unshift(t);
+    try {
+      this.persistence?.saveTask({
+        id: t.id, session_id: t.sessionId, title: t.title,
+        started_at: t.startedAt, finished_at: t.finishedAt,
+        status: t.status, steps: JSON.stringify(t.steps),
+        tokens_in: t.tokensIn, tokens_out: t.tokensOut,
+      });
+    } catch (e) {
+      console.error('[persistence] 任务落库失败:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  listTasks(): TaskRecord[] { return this.tasks.slice(0, 200); }
 
   create(): Session {
     const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;

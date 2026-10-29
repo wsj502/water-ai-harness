@@ -12,6 +12,11 @@ import type { WMessage } from '@water/core';
 
 interface SessionRow { id: string; title: string; created_at: number }
 interface MessageRow { session_id: string; seq: number; role: string; parts: string }
+export interface TaskRow {
+  id: string; session_id: string; title: string;
+  started_at: number; finished_at: number; status: string;
+  steps: string; tokens_in: number; tokens_out: number;
+}
 
 export class SessionPersistence {
   private db: DatabaseSync;
@@ -32,6 +37,17 @@ export class SessionPersistence {
         role TEXT NOT NULL,
         parts TEXT NOT NULL,
         PRIMARY KEY (session_id, seq)
+      );
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL,
+        tokens_in INTEGER NOT NULL DEFAULT 0,
+        tokens_out INTEGER NOT NULL DEFAULT 0
       );
     `);
   }
@@ -75,7 +91,19 @@ export class SessionPersistence {
 
   deleteSession(id: string): void {
     this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id);
+    this.db.prepare('DELETE FROM tasks WHERE session_id = ?').run(id);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  }
+
+  saveTask(t: TaskRow): void {
+    this.db.prepare(
+      'INSERT INTO tasks (id, session_id, title, started_at, finished_at, status, steps, tokens_in, tokens_out) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(t.id, t.session_id, t.title, t.started_at, t.finished_at, t.status, t.steps, t.tokens_in, t.tokens_out);
+  }
+
+  loadTasks(): TaskRow[] {
+    return this.db.prepare('SELECT * FROM tasks ORDER BY started_at DESC LIMIT 200').all() as unknown as TaskRow[];
   }
 
   close(): void { this.db.close(); }

@@ -18,12 +18,13 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { existsSync } from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
   agentLoop, builtinTools, createProvider, loadPlugins, MockProvider,
   resolveConfig, type PluginRegistry, type Provider, type ToolUsePart,
 } from '@water/core';
-import { SessionStore, type ApprovalDecision } from './session.js';
+import { SessionStore, type ApprovalDecision, type TaskRecord, type TaskStep } from './session.js';
 import { SessionPersistence } from './persistence.js';
 
 const cfg = resolveConfig({});
@@ -75,6 +76,60 @@ app.get('/api/plugins', c => c.json({
     error: p.error ?? null,
   })),
 }));
+
+/** 任务列表（最近 200 条） */
+app.get('/api/tasks', c => c.json({ tasks: store.listTasks() }));
+
+// ---- 工作区文件浏览 ----
+
+interface FileNode { name: string; path: string; dir: boolean; children?: FileNode[] }
+
+function resolveInCwd(p: string): string {
+  const abs = path.resolve(cfg.cwd, p);
+  const root = path.resolve(cfg.cwd);
+  if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error('路径越出工作区');
+  return abs;
+}
+
+async function buildTree(dir: string, depth: number): Promise<FileNode[]> {
+  if (depth <= 0) return [];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  const out: FileNode[] = [];
+  for (const e of entries) {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === 'dist' || e.name === 'target') continue;
+    const full = path.join(dir, e.name);
+    const rel = path.relative(cfg.cwd, full).replace(/\\/g, '/');
+    if (e.isDirectory()) {
+      out.push({ name: e.name, path: rel, dir: true, children: await buildTree(full, depth - 1) });
+    } else {
+      out.push({ name: e.name, path: rel, dir: false });
+    }
+  }
+  return out.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+}
+
+app.get('/api/files/tree', async c => {
+  try {
+    const tree = await buildTree(cfg.cwd, 4);
+    return c.json({ root: cfg.cwd, tree });
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+app.get('/api/files/content', async c => {
+  const p = c.req.query('path');
+  if (!p) return c.json({ error: '缺少 path 参数' }, 400);
+  try {
+    const abs = resolveInCwd(p);
+    const st = await fsp.stat(abs);
+    if (st.size > 512 * 1024) return c.json({ error: '文件过大（>512KB），仅支持预览小文件' }, 413);
+    const text = await fsp.readFile(abs, 'utf8');
+    return c.json({ path: p, size: st.size, content: text });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : String(e) }, 404);
+  }
+});
 
 /** 会话历史：Web 切换会话时水合渲染用 */
 app.get('/api/sessions/:id/messages', c => {
@@ -151,6 +206,15 @@ app.post('/api/sessions/:id/messages', async c => {
       });
       return s.waitApproval(call);
     };
+
+    // 任务记录：收集这次运行的步骤与 token
+    const task: TaskRecord = {
+      id: `t_${Date.now().toString(36)}`,
+      sessionId: s.id, title: s.title,
+      startedAt: Date.now(), finishedAt: 0, status: 'done',
+      steps: [], tokensIn: 0, tokensOut: 0,
+    };
+
     try {
       for await (const ev of agentLoop({
         provider, model: cfg.model, system: SYSTEM, messages: s.messages,
@@ -158,14 +222,34 @@ app.post('/api/sessions/:id/messages', async c => {
         toolCtx: { cwd: cfg.cwd }, approve,
         maxTurns: 20, signal: ac.signal,
       })) {
+        // 收集任务步骤
+        if (ev.type === 'tool_result') {
+          const step: TaskStep = {
+            tool: ev.call.name,
+            summary: JSON.stringify(ev.call.input).slice(0, 80),
+            ok: !ev.isError, durationMs: ev.durationMs,
+          };
+          task.steps.push(step);
+        } else if (ev.type === 'tool_denied') {
+          task.steps.push({ tool: ev.call.name, summary: '', ok: null, durationMs: 0 });
+        } else if (ev.type === 'usage') {
+          task.tokensIn += ev.inputTokens; task.tokensOut += ev.outputTokens;
+        } else if (ev.type === 'finish') {
+          task.status = ev.reason === 'end' ? 'done'
+            : ev.reason === 'error' ? 'error'
+            : ev.reason === 'aborted' ? 'aborted' : 'max_turns';
+        }
         await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
       }
     } catch (e) {
+      task.status = 'error';
       await stream.writeSSE({
         event: 'error',
         data: JSON.stringify({ type: 'finish', reason: 'error', message: String(e) }),
       });
     } finally {
+      task.finishedAt = Date.now();
+      store.addTask(task);
       s.busy = false;
       s.denyAllPending();
       store.save(s); // 消息处理结束 → 落库
