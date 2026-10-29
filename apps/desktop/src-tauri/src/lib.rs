@@ -4,6 +4,7 @@
 
 use std::process::{Child, Command};
 use std::sync::Mutex;
+use tauri::Manager;
 
 /// 管理 sidecar 子进程，窗口关闭时清理
 struct ServerChild(Mutex<Option<Child>>);
