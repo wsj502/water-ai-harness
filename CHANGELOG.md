@@ -9,6 +9,16 @@
 
 ## [Unreleased]
 
+### 新增（M2 · 内核深化：上下文管理与容错）
+
+- 内核新增上下文管理器（`context.ts`，00-导读架构图「CTX」模块落地）：中英混合 token 估算启发式 + 确定性压缩（先裁旧 tool_result 带占位标记 → 再丢最旧轮次，保证首条非 system 消息为 user 的协议合法性）
+- Agent Loop 每轮检查预算（模型注册表窗口 × 0.8，`WATER_MAX_CONTEXT_TOKENS` 可强制），超窗发新事件 `compacted`，Web 渲染压缩提示条
+- 内核新增容错网关 `fetchWithRetry`：429/500/502/503/529 与网络错误指数退避重试（1s/2s/4s，尊重 Retry-After，上限 3 次）；**只在流首帧前重试**；用户中断不重试；fetch 超时 120s；双适配器全接入
+- SYSTEM prompt 三级可配：`WATER_SYSTEM` env > `config.json systemPrompt` > 内置默认；工作区 `AGENTS.md` 存在则自动拼接为项目上下文
+- 内置斜杠命令：`/model`（列模型）/`/model <id>`（切换）/`/compact`（立即压缩并报告）/`/system`（查看生效 prompt）——本地处理不进模型
+- 修复：中断时半截 assistant 消息不再入历史（避免污染下一轮）；删除 `loop.ts` 中未实现的死分支
+- 新增离线测试 `npm run test:context`（估算器/压缩三级策略/Loop 集成/重试与中断语义，进 CI）；E2E 扩至 21 断言（内置命令四条）
+
 ### 新增（M1 · 模型注册表与会话级切换）
 
 - 内核新增模型注册表：`ModelInfo` 元数据（协议/厂商/上下文窗口/思考标记）+ 内置模型表（GLM-4.6、GLM-4.5-Air、DeepSeek Chat/Reasoner）+ `~/.water/config.json` `models[]` 自定义模型（id 冲突时自定义优先；`apiKeyEnv` 只存环境变量名，值校验防误贴真实 key）

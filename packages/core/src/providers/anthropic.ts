@@ -13,6 +13,7 @@ import type {
   WMessage, ToolSpec, Part,
 } from '../types.js';
 import { parseSSE } from './sse.js';
+import { fetchWithRetry } from './retry.js';
 
 // ---------- 请求侧：WMessage → Anthropic ----------
 
@@ -76,7 +77,7 @@ export class AnthropicProvider implements Provider {
       .map(toAnthropicMessage)
       .filter((m): m is NonNullable<typeof m> => m !== null);
 
-    const resp = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+    const resp = await fetchWithRetry(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -92,6 +93,7 @@ export class AnthropicProvider implements Provider {
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         stream: true,
       }),
+      ...(req.signal ? { signal: req.signal } : {}),
     });
 
     if (!resp.ok || !resp.body) {

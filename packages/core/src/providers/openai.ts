@@ -13,6 +13,7 @@ import type {
   WMessage, ToolSpec,
 } from '../types.js';
 import { parseSSE } from './sse.js';
+import { fetchWithRetry } from './retry.js';
 
 // ---------- 请求侧：WMessage → OpenAI ----------
 
@@ -71,7 +72,7 @@ export class OpenAIProvider implements Provider {
   constructor(private config: ProviderConfig) {}
 
   async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
-    const resp = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const resp = await fetchWithRetry(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -85,6 +86,7 @@ export class OpenAIProvider implements Provider {
         stream: true,
         stream_options: { include_usage: true },
       }),
+      ...(req.signal ? { signal: req.signal } : {}),
     });
 
     if (!resp.ok || !resp.body) {

@@ -6,6 +6,7 @@ import { OpenAIProvider } from './openai.js';
 
 export { AnthropicProvider } from './anthropic.js';
 export { OpenAIProvider } from './openai.js';
+export { fetchWithRetry } from './retry.js';
 
 /** 按配置创建 Provider 适配器 —— 内核唯一的入口 */
 export function createProvider(config: ProviderConfig): Provider {

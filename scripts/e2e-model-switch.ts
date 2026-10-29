@@ -151,6 +151,25 @@ async function main(): Promise<void> {
     });
     ok(evil.status === 400 && /baseUrl|字段/.test(evil.body.error ?? ''), '越权 baseUrl 字段被 400 显式拒绝（防 key 外泄）');
 
+    // ---- 7. 内置斜杠命令（M2：本地处理不进模型）----
+    const s3 = await jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const cmd = async (text: string): Promise<string> => {
+      const evs = await readSSE(`${BASE}/api/sessions/${s3.body.id}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+      });
+      return evs.filter(e => e.type === 'text_delta').map(e => (e as { text?: string }).text ?? '').join('');
+    };
+    const out1 = await cmd('/model');
+    ok(out1.includes('glm-4.6') && out1.includes('可用模型'), '/model 列出模型清单');
+    const out2 = await cmd('/model deepseek-chat');
+    ok(out2.includes('已切换') && out2.includes('deepseek-chat'), '/model <id> 切换本会话模型');
+    const out3 = await cmd('/system');
+    ok(out3.includes('Water'), '/system 展示生效 SYSTEM');
+    const out4 = await cmd('/compact');
+    ok(out4.includes('压缩') || out4.includes('token'), '/compact 报告上下文状态');
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）

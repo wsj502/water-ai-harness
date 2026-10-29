@@ -375,6 +375,13 @@ function Block({ block, sessionId, model, streaming }: {
           <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{block.text}</div>
         </details>
       );
+    case 'notice':
+      return (
+        <div style={{
+          color: 'var(--text-2)', fontSize: 12, textAlign: 'center',
+          margin: '6px 0', userSelect: 'none',
+        }}>{block.text}</div>
+      );
     case 'text':
       return (
         <div className="msg assistant">
