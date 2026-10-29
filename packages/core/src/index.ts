@@ -5,3 +5,5 @@ export * from './permissions.js';
 export * from './providers/index.js';
 export * from './tools/index.js';
 export * from './loop.js';
+export * from './plugin/types.js';
+export * from './plugin/loader.js';

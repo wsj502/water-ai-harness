@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 import { PermissionEngine } from './permissions.js';
 import type { Tool, ToolContext } from './tools/index.js';
+import type { PluginHooks } from './plugin/types.js';
 
 export interface AgentLoopOptions {
   provider: Provider;
@@ -25,6 +26,8 @@ export interface AgentLoopOptions {
   maxTokens?: number;
   /** 需要用户审批时的回调（CLI/Web 各自实现交互） */
   approve?: (call: ToolUsePart, reason: string) => Promise<'once' | 'session' | 'deny'>;
+  /** 插件钩子（P5）：beforeToolCall 返回 false 可阻止执行 */
+  hooks?: PluginHooks[];
   signal?: AbortSignal;
 }
 
@@ -141,14 +144,37 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
         continue;
       }
 
+      // 插件钩子：beforeToolCall 返回 false → 阻止执行
+      let blockedBy: string | null = null;
+      for (const h of opts.hooks ?? []) {
+        try {
+          if (h.beforeToolCall?.(call.name, call.input) === false) {
+            blockedBy = call.name;
+            break;
+          }
+        } catch { /* 钩子异常不阻断主流程 */ }
+      }
+      if (blockedBy) {
+        yield { type: 'tool_denied', call };
+        resultParts.push({
+          type: 'tool_result', toolUseId: call.id,
+          content: `插件钩子阻止了 ${call.name} 的执行。`, isError: true,
+        });
+        continue;
+      }
+
       const started = Date.now();
       try {
         const result = await tool.run(call.input, opts.toolCtx);
-        yield { type: 'tool_result', call, result, isError: false, durationMs: Date.now() - started };
+        const durationMs = Date.now() - started;
+        for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, true, durationMs); } catch { /* 忽略 */ } }
+        yield { type: 'tool_result', call, result, isError: false, durationMs };
         resultParts.push({ type: 'tool_result', toolUseId: call.id, content: result });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        yield { type: 'tool_result', call, result: msg, isError: true, durationMs: Date.now() - started };
+        const durationMs = Date.now() - started;
+        for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, false, durationMs); } catch { /* 忽略 */ } }
+        yield { type: 'tool_result', call, result: msg, isError: true, durationMs };
         resultParts.push({ type: 'tool_result', toolUseId: call.id, content: `工具执行错误：${msg}`, isError: true });
       }
     }
