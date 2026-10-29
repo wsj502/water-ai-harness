@@ -23,7 +23,8 @@ const VALID_PERMISSIONS = new Set([
 export function discoverPluginDirs(cwd: string, extraDirs: string[] = []): string[] {
   const dirs: string[] = [];
   const envDirs = (process.env.WATER_PLUGIN_DIRS ?? '')
-    .split(/[;:]/)
+    // Windows 盘符含冒号（F:\...），必须用平台分隔符（win=';' posix=':'）
+    .split(path.delimiter)
     .map(s => s.trim())
     .filter(Boolean);
   dirs.push(...extraDirs, ...envDirs,

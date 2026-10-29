@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type ServerConfig, type SessionMeta } from './api';
 import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
+import { PluginsView } from './views/PluginsView';
+import { SettingsView } from './views/SettingsView';
+
+type View = 'chat' | 'plugins' | 'settings';
 
 export default function App() {
+  const [view, setView] = useState<View>('chat');
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -68,7 +73,9 @@ export default function App() {
   return (
     <div className="app">
       <Topbar config={config} />
-      <Sidebar sessions={sessions} activeId={activeId} onOpen={openSession} onNew={newSession} />
+      <Sidebar sessions={sessions} activeId={activeId} view={view}
+        onOpen={openSession} onNew={newSession} onNav={setView} />
+      {view === 'chat' && (
       <main className="main">
         <div className="chat-scroll" ref={scrollRef}>
           <div className="chat-col">
@@ -86,6 +93,9 @@ export default function App() {
         </div>
         <Composer onSend={send} busy={busy} config={config} />
       </main>
+      )}
+      {view === 'plugins' && <PluginsView />}
+      {view === 'settings' && <SettingsView />}
       <footer className="statusbar">
         <span className="item"><span className="ok">●</span> provider: {config?.protocol ?? '…'}</span>
         <span className="item">{config?.baseUrl ?? ''}</span>
@@ -111,11 +121,13 @@ function Topbar({ config }: { config: ServerConfig | null }) {
   );
 }
 
-function Sidebar({ sessions, activeId, onOpen, onNew }: {
+function Sidebar({ sessions, activeId, view, onOpen, onNew, onNav }: {
   sessions: SessionMeta[];
   activeId: string | null;
+  view: 'chat' | 'plugins' | 'settings';
   onOpen: (id: string) => void;
   onNew: () => void;
+  onNav: (v: 'chat' | 'plugins' | 'settings') => void;
 }) {
   return (
     <aside className="sidebar">
@@ -126,6 +138,11 @@ function Sidebar({ sessions, activeId, onOpen, onNew }: {
           <div className="ver">web · dev</div>
         </div>
       </div>
+      <nav className="nav">
+        <a className={`nav-item${view === 'chat' ? ' active' : ''}`} onClick={() => onNav('chat')}><span className="ico">💬</span>会话</a>
+        <a className={`nav-item${view === 'plugins' ? ' active' : ''}`} onClick={() => onNav('plugins')}><span className="ico">⬡</span>插件</a>
+        <a className={`nav-item${view === 'settings' ? ' active' : ''}`} onClick={() => onNav('settings')}><span className="ico">⚙</span>设置</a>
+      </nav>
       <div className="section-title">
         会话 <span className="new" title="新建会话" onClick={onNew}>＋</span>
       </div>

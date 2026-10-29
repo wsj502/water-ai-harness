@@ -10,8 +10,10 @@
   ],
   "scripts": {
     "dev": "tsx scripts/dev-chat.ts",
+    "dev:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& tsx watch apps/server/src/index.ts",
+    "start:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& node apps/server/dist/index.js",
     "typecheck": "tsc --noEmit -p packages/core",
-    "build": "tsc -p packages/core"
+    "build": "tsc -b packages/core apps/server apps/cli && npm run build -w apps/web"
   },
   "engines": {
     "node": ">=22"

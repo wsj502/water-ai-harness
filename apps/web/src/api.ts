@@ -38,11 +38,25 @@ async function json<T>(resp: Response): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+export interface PluginInfo {
+  name: string;
+  version: string;
+  description: string;
+  permissions: string[];
+  tools: string[];
+  commands: string[];
+  dir: string;
+  error: string | null;
+}
+
 export const api = {
   config: () => fetch('/api/config').then(r => json<ServerConfig>(r)),
 
   listSessions: () =>
     fetch('/api/sessions').then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
+
+  listPlugins: () =>
+    fetch('/api/plugins').then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
 
   createSession: () =>
     fetch('/api/sessions', { method: 'POST' }).then(r => json<{ id: string }>(r)).then(j => j.id),
