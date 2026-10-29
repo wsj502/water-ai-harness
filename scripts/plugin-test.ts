@@ -12,14 +12,17 @@ console.log('\n=== 插件清单 ===');
 let ok = true;
 const expect = (cond: boolean, msg: string) => { console.log(`${cond ? '✓' : '✗'} ${msg}`); ok &&= cond; };
 
-expect(registry.plugins.length === 2, `加载 2 个插件（实际 ${registry.plugins.length}）`);
+expect(registry.plugins.length === 3, `加载 3 个插件（实际 ${registry.plugins.length}）`);
 expect(registry.plugins.every(p => !p.error), '无加载错误');
 
 const echo = registry.tools.find(t => t.spec.name === 'echo');
 const fetchUrl = registry.tools.find(t => t.spec.name === 'fetch_url');
+const mcpEcho = registry.tools.find(t => t.spec.name === 'mcp__demo__mcp_echo');
 expect(!!echo, 'echo 工具已注册');
 expect(!!fetchUrl, 'fetch_url 工具已注册');
+expect(!!mcpEcho, 'mcp__demo__mcp_echo 工具已注册（MCP 桥）');
 expect(fetchUrl?.risk === 'medium', `fetch_url 风险级被提升为 medium（实际 ${fetchUrl?.risk}）`);
+expect(mcpEcho?.risk === 'high', `MCP 工具风险级 high（实际 ${mcpEcho?.risk}）`);
 
 const review = registry.commands.find(c => c.name === 'review');
 expect(!!review, '/review 斜杠命令已注册');
@@ -29,6 +32,12 @@ expect(registry.hooks.length >= 1, '钩子已注册');
 if (echo) {
   const out = await echo.run({ text: 'hello water' }, { cwd });
   expect(out === 'echo: hello water', `echo 实跑: ${out}`);
+}
+
+// 实跑 MCP 桥接工具（进程外 demo server）
+if (mcpEcho) {
+  const out = await mcpEcho.run({ text: 'hello mcp' }, { cwd });
+  expect(out === 'mcp_echo: hello mcp', `MCP 桥实跑: ${out}`);
 }
 
 // 实跑 fetch_url（打本地 server 的健康端点）

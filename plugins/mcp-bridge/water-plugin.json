@@ -1,0 +1,7 @@
+{
+  "name": "water-plugin-mcp-bridge",
+  "version": "0.1.0",
+  "description": "MCP 桥接：把进程外 MCP server 的工具接进 Water（真正的隔离逃生舱）",
+  "main": "index.js",
+  "permissions": ["process:spawn"]
+}
