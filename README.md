@@ -33,7 +33,7 @@
 | P0 | 高保真 UI 原型（HTML+CSS） | ✅ 完成 | [01-界面设计](docs/articles/01-界面设计.md) |
 | P1 | 内核：Agent Loop + Provider + 内置工具 | 🚧 代码完成，待 GLM 联调 | [02-Agent Loop](docs/articles/02-Agent-Loop解剖.md) |
 | P2 | CLI 与 npm 分发 | ✅ 完成 | [04-CLI工程化](docs/articles/04-CLI工程化与npm发布.md) |
-| P3 | Server + Web UI | ⬜ | 05 |
+| P3 | Server + Web UI | ✅ 完成（mock 联调通过，GLM 待联调） | [03](docs/articles/03-SSE流式协议设计.md) / [05](docs/articles/05-三端共用一套会话协议.md) |
 | P4 | Tauri 桌面端 | ⬜ | 06 |
 | P5 | 插件系统 | ⬜ | 07 |
 | P6 | Docker 镜像 + 运维部署文档 | ⬜ | 08 |
