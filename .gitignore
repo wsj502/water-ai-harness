@@ -22,3 +22,6 @@ workspace/
 .water/*.db-*
 # npm pack 浜х墿
 *.tgz
+
+# 测试覆盖率报告（vitest 产物）
+coverage/

@@ -13,9 +13,9 @@
     "dev:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& tsx watch apps/server/src/index.ts",
     "start:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& node apps/server/dist/index.js",
     "typecheck": "tsc --noEmit -p packages/core",
-    "test:loop": "tsx scripts/loop-mock-test.ts",
-    "test:context": "tsx scripts/test-context.ts",
-    "test:web": "tsx scripts/test-web-pure.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "tsx scripts/e2e-model-switch.ts",
     "build": "tsc -b packages/core apps/server apps/cli && npm run build -w apps/web"
   },
@@ -25,9 +25,11 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.0.5",
     "esbuild": "^0.28.2",
     "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }
