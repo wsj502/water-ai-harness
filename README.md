@@ -30,8 +30,8 @@
 
 | 阶段 | 内容 | 状态 | 配套文章 |
 |---|---|---|---|
-| P0 | 高保真 UI 原型（HTML+CSS） | 🚧 进行中 | [01-界面设计](docs/articles/01-界面设计.md) |
-| P1 | 内核：Agent Loop + Provider + 内置工具 | ⬜ | 02 / 03 |
+| P0 | 高保真 UI 原型（HTML+CSS） | ✅ 完成 | [01-界面设计](docs/articles/01-界面设计.md) |
+| P1 | 内核：Agent Loop + Provider + 内置工具 | 🚧 代码完成，待 GLM 联调 | [02-Agent Loop](docs/articles/02-Agent-Loop解剖.md) |
 | P2 | CLI 与 npm 分发 | ⬜ | 04 |
 | P3 | Server + Web UI | ⬜ | 05 |
 | P4 | Tauri 桌面端 | ⬜ | 06 |
