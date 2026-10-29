@@ -1,6 +1,6 @@
 {
   "name": "@water/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Water 内核：消息模型 / Provider 双协议适配 / 工具系统 / 权限 / Agent Loop",
   "type": "module",
   "exports": {
@@ -9,7 +9,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "prepublishOnly": "npm run build"

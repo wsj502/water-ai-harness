@@ -1,57 +1,138 @@
-# Water — AI Agent Harness（学习研究版）
+<div align="center">
 
-> 仿写 OpenCode 类 AI Agent 运行框架：内核对接大模型，CLI / Web / 桌面三端，插件系统可扩展。
-> 本项目仅用于个人学习研究，全程配套学习指引文章（见 `docs/articles/`）。
+# 💧 Water
 
-## 项目定位
+**一个用于学习研究的 AI Agent Harness** —— 内核对接大模型，CLI / Web / 桌面三端，插件系统可扩展。
+
+仿写 OpenCode / ZCode 类智能体框架：不是「又一个聊天框」，而是把
+**大模型、工具、人、界面**组织进一个可循环、可扩展、可审计的运行时。
+
+[快速开始](#快速开始) · [架构](#架构) · [学习路线](#学习路线) · [贡献指南](CONTRIBUTING.md)
+
+</div>
+
+---
+
+## 快速开始（离线 mock，零凭据）
+
+```powershell
+git clone https://github.com/wsj502/water-ai-harness.git
+cd water-ai-harness && npm ci
+$env:WATER_MOCK='1'; npm run dev:server   # → http://127.0.0.1:3210
+```
+
+对接真实大模型（智谱 GLM / DeepSeek 等任意 OpenAI 兼容端点）：
+
+```powershell
+# 凭据经 DPAPI 加密存储注入进程内存，明文永不落盘（见 docs/articles/08）
+powershell -ExecutionPolicy Bypass -File .\import-secrets.ps1 -Path <你的.env>
+powershell -ExecutionPolicy Bypass -File .\start-secure.ps1 -- npx tsx apps\server\src\index.ts
+```
+
+## 界面
+
+| 会话（工具卡 · 审批 · diff · markdown） | 模型切换（会话级，运行时生效） |
+|---|---|
+| ![会话](docs/assets/web-chat.png) | ![模型菜单](docs/assets/web-model-menu.png) |
+
+| 任务回放 | 工作区浏览 |
+|---|---|
+| ![任务](docs/assets/web-tasks.png) | ![工作区](docs/assets/web-workspace.png) |
+
+## 架构
 
 ```
-不是「又一个聊天框」，而是理解 Agent Harness 的四层本质：
-
-  接入层   CLI / Web / Desktop        —— 三端壳，复用同一份会话协议
-  协议层   HTTP + SSE（JSON 事件流）   —— 内核与前端之间的唯一契约
-  内核层   Agent Loop + Provider + Tool —— 模型↔工具往返调度的心脏
-  扩展层   Plugin System（+MCP 桥接）  —— 第三方能力的入口
+接入层   CLI / Web / Desktop        —— 三端壳，复用同一份会话协议
+协议层   HTTP + SSE（JSON 事件流）   —— 内核与前端之间的唯一契约
+内核层   Agent Loop + Provider + Tool —— 模型↔工具往返调度的心脏
+扩展层   Plugin System（+MCP 桥接）  —— 第三方能力的入口
 ```
 
-## 技术选型
+```mermaid
+flowchart LR
+    subgraph 接入层
+        CLI[water chat] --- WEB[React Web] --- DESK[Tauri 桌面]
+    end
+    subgraph 内核 water-core
+        LOOP[Agent Loop<br/>压缩·审批·失控防护] --> PROV[Provider Registry<br/>双协议适配]
+        LOOP --> TOOL[内置工具 ×6<br/>read/write/edit/grep/glob/shell]
+        LOOP --> PERM[权限引擎<br/>三级风险 + 会话记忆]
+    end
+    接入层 -->|HTTP + SSE 事件流| LOOP
+    PROV --> GLM[GLM·Anthropic 协议] & OAI[DeepSeek/vLLM·OpenAI 兼容]
+    PLUG[ESM 插件 + MCP 桥] --> TOOL
+```
 
-| 层 | 选型 | 理由 |
+## 功能矩阵（v0.2.0）
+
+| 能力 | 状态 | 说明 |
 |---|---|---|
-| 全栈语言 | TypeScript + Node 22 | 三端代码复用最大化 |
-| 模型协议 | **双协议**：OpenAI 兼容 + Anthropic Messages | 智谱 GLM coding plan 走 Anthropic 端点；DeepSeek/通义/vLLM 走 OpenAI 兼容 |
-| CLI | commander + 自研 TUI 渲染 | npm 分发顺滑 |
-| Server | Hono（轻量 HTTP + SSE） | 少依赖、易讲清原理 |
-| Web | React + Vite | P0 原型即视觉基准 |
-| Desktop | Tauri | 复用 Web UI，包体 ~10MB |
-| 插件 | 进程内 ESM 插件 + MCP client 逃生舱 | 学习性价比最高的隔离方案 |
+| 双协议 Provider | ✅ | Anthropic Messages + OpenAI 兼容；翻译层 golden 测试帧级锁定 |
+| 模型注册表与会话级切换 | ✅ | 运行时切换不重启进程；协议随模型推断；Web 只能「选」不能传 baseUrl（防 key 外泄） |
+| 上下文管理 | ✅ | token 估算 + 三级确定性压缩（裁旧 tool_result → 丢最旧轮次 → 孤儿清退） |
+| 容错重试 | ✅ | 429/5xx 指数退避，只在流首帧前重试；中断穿透；120s 超时 |
+| 权限与审批 | ✅ | 低/中/高三级风险，once/session/deny；审批桥打通 SSE 与反向 POST |
+| SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话 |
+| Web 体验 | ✅ | 零依赖 markdown 渲染（XSS 架构免疫）、行级 diff、五页视图 |
+| 三端 | ✅ | CLI（chat/run/doctor）/ Web / Tauri 桌面（SEA sidecar 单文件） |
+| 插件系统 | ✅ | 进程内 ESM + manifest 权限治理 + MCP 桥接示例 |
+| SYSTEM 可配 | ✅ | env > config.json > 默认；AGENTS.md 自动注入 |
+| 持久化 | ✅ | node:sqlite 零依赖；会话/任务落库重启恢复 |
+| 测试 | ✅ | vitest 37 用例（协议 golden/上下文/渲染 XSS 契约）+ 离线 E2E 27 断言，双平台 CI |
+| Docker 交付 | ✅ | 多阶段镜像 + 单进程静态托管形态 |
+
+## 目录结构
+
+```
+packages/core        内核：消息模型 / Agent Loop / Provider / 工具 / 权限 / 上下文管理
+apps/server          HTTP + SSE 会话协议（Hono）
+apps/web             React Web UI（零 markdown 依赖，XSS 架构免疫）
+apps/cli             water 命令行（chat / run / doctor）
+apps/desktop         Tauri 桌面端（Node SEA 单文件 sidecar）
+plugins/             示例插件（echo / web-fetch / mcp-bridge）
+tests/               vitest（含协议翻译层 golden 测试）
+scripts/             开发脚本 + 离线 E2E
+docs/articles/       13 篇深度文章（学习路线）
+```
+
+## 学习路线（docs/articles）
+
+每推进一个阶段留下一篇「为什么这样做」的记录——代码会过时，决策过程不会。
+
+| # | 主题 | 深挖点 |
+|---|---|---|
+| 00 | [导读](docs/articles/00-导读.md) | 四层架构与 P0→P6→M 系列演进逻辑 |
+| 02 | [Agent Loop 解剖](docs/articles/02-Agent-Loop解剖.md) | 真实智谱 SSE 帧 / 失败模式 / 与 OpenCode 逐维对照 |
+| 03 | [SSE 流式协议设计](docs/articles/03-SSE流式协议设计.md) | 三传输选型 / 审批桥 / 断线状态机 / 事件回放 |
+| 09 | [模型注册表与会话级切换](docs/articles/09-模型注册表与会话级切换.md) | 为什么 Web 不能指定 baseUrl（key 外泄通道） |
+| 10 | [上下文管理与容错](docs/articles/10-上下文管理与容错.md) | 压缩三级策略 / 首帧前重试纪律 / 中断语义 |
+| 11 | [SSE 事件回放与可信渲染](docs/articles/11-SSE事件回放与可信渲染.md) | React 元素渲染的 XSS 免疫论证 |
+| 12 | [开源工程实践实录](docs/articles/12-开源工程实践实录.md) | issue/PR/CI/tag/Release 全流程真实操作归档 |
+
+[全部 13 篇 →](docs/articles/00-导读.md)
+
+## 开发
+
+```powershell
+npm run typecheck          # 类型检查
+npm test                   # vitest 全量单测（含协议 golden）
+npm run build              # 全量构建
+npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，27 断言）
+```
 
 ## 路线图
 
-| 阶段 | 内容 | 状态 | 配套文章 |
-|---|---|---|---|
-| P0 | 高保真 UI 原型（HTML+CSS） | ✅ 完成 | [01-界面设计](docs/articles/01-界面设计.md) |
-| P1 | 内核：Agent Loop + Provider + 内置工具 | ✅ 完成（GLM 联调通过） | [02-Agent Loop](docs/articles/02-Agent-Loop解剖.md) |
-| P2 | CLI 与 npm 分发 | ✅ 完成 | [04-CLI工程化](docs/articles/04-CLI工程化与npm发布.md) |
-| P3 | Server + Web UI | ✅ 完成（mock 联调通过，GLM 待联调） | [03](docs/articles/03-SSE流式协议设计.md) / [05](docs/articles/05-三端共用一套会话协议.md) |
-| P4 | Tauri 桌面端 | ✅ 完成（窗口实测通过） | [06-Tauri桌面端](docs/articles/06-Tauri桌面端.md) |
-| P5 | 插件系统 | ✅ 完成（含 MCP 桥接） | [07-插件系统设计](docs/articles/07-插件系统设计.md) |
-| P6 | Docker 镜像 + 运维部署文档 | ✅ 完成（docker build 待有 Docker 的机器验证） | [08-从源码到生产](docs/articles/08-从源码到生产.md) |
+- [x] P0-P6：原型 → 内核 → CLI → Server+Web → 桌面 → 插件 → 交付
+- [x] v0.2.0（M0-M6）：开源工程地基 / 模型切换 / 上下文管理 / Web 体验 / 测试基建 / 文章深化
+- [ ] v0.3 计划：子代理（task 派生）、LLM 摘要压缩、CLI `/model` 交互命令、MCP 协议扩展
 
-详见 [docs/articles/00-导读.md](docs/articles/00-导读.md)。
+## 贡献与安全
 
-## 目录结构（随阶段演进）
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。两条红线：
 
-```
-06-water-ai-harness/
-├── prototype/          # P0：高保真 HTML+CSS 原型
-├── docs/
-│   └── articles/       # 学习指引系列文章（含 mermaid 架构图）
-├── packages/           # P1+：core / plugins-sdk 等内核包
-└── apps/               # P2+：cli / server / web / desktop
-```
+- 🔐 **明文凭据永不入库**：DPAPI 加密存储 + 进程内存注入；PR 模板含凭据检查项
+- 🧪 **每个变更走 issue → 分支 → PR → CI → squash merge**，main 永远可构建
 
-## 红线
+## License
 
-- 凭据一律走环境变量 / DPAPI 加密存储（见 `~/.ai-secrets/`），**明文 token 永不入库**
-- 每阶段必须「能跑起来 + 写完文章」才进入下一阶段
+[MIT](LICENSE) © 2026 wsj502 · 仅供学习研究

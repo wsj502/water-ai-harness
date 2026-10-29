@@ -1,12 +1,14 @@
 {
   "name": "water-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Water CLI — AI Agent Harness 的命令行端",
   "type": "module",
   "bin": {
     "water": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22"
   },
