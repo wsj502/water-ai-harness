@@ -117,7 +117,8 @@ flowchart LR
 - [x] Agent Loop（`loop.ts`，审批/拒绝/上限/中断语义完整）
 - [x] **离线闭环测试 PASS**（`scripts/loop-mock-test.ts`：MockProvider 两轮真实走查，
       历史结构断言通过）
-- [ ] **智谱 GLM 真实联调**（等你导入 ZHIPU_API_KEY 后跑 `scripts/dev-chat.ts`）
+- [x] **智谱 GLM 真实联调**（2026-10-29 通过：思考流 → glob 工具调用 → 结果回填 → 中文结论。
+      已知小尾巴：usage 的 input_tokens 恒为 0——智谱端点的 usage 上报时机与官方有差异，待查）
 
 ## 如何跑真实联调
 
