@@ -36,7 +36,7 @@
 | P3 | Server + Web UI | ✅ 完成（mock 联调通过，GLM 待联调） | [03](docs/articles/03-SSE流式协议设计.md) / [05](docs/articles/05-三端共用一套会话协议.md) |
 | P4 | Tauri 桌面端 | ⏸ 待 Rust 工具链 | 06 |
 | P5 | 插件系统 | ✅ 完成（含 MCP 桥接） | [07-插件系统设计](docs/articles/07-插件系统设计.md) |
-| P6 | Docker 镜像 + 运维部署文档 | ⬜ | 08 |
+| P6 | Docker 镜像 + 运维部署文档 | ✅ 完成（docker build 待有 Docker 的机器验证） | [08-从源码到生产](docs/articles/08-从源码到生产.md) |
 
 详见 [docs/articles/00-导读.md](docs/articles/00-导读.md)。
 
