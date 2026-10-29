@@ -1,0 +1,13 @@
+{
+  "name": "@water/core",
+  "version": "0.1.0",
+  "description": "Water 内核：消息模型 / Provider 双协议适配 / 工具系统 / 权限 / Agent Loop",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./providers": "./src/providers/index.ts",
+    "./tools": "./src/tools/index.ts"
+  },
+  "license": "MIT"
+}

@@ -9,11 +9,17 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "echo \"P0 阶段暂无 dev 脚本\"",
-    "build": "echo \"P0 阶段暂无 build 脚本\""
+    "dev": "tsx scripts/dev-chat.ts",
+    "typecheck": "tsc --noEmit -p packages/core",
+    "build": "tsc -p packages/core"
   },
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
 }
