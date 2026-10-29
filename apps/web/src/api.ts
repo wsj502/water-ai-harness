@@ -1,8 +1,14 @@
 /**
  * Water Server API 客户端。
  * 会话消息走 SSE：fetch + ReadableStream 手动解析帧（POST 流不能用 EventSource）。
+ *
+ * 基地址：浏览器开发/生产（server 静态托管）走同源相对路径；
+ * Tauri 桌面端 origin 是 tauri://localhost，需显式指向 sidecar 的 127.0.0.1:3210。
  */
 import type { LoopEvent, WMessage } from '@water/core';
+
+const BASE: string =
+  typeof window !== 'undefined' && '__TAURI__' in window ? 'http://127.0.0.1:3210' : '';
 
 export interface ServerConfig {
   protocol: string;
@@ -50,22 +56,22 @@ export interface PluginInfo {
 }
 
 export const api = {
-  config: () => fetch('/api/config').then(r => json<ServerConfig>(r)),
+  config: () => fetch(`${BASE}/api/config`).then(r => json<ServerConfig>(r)),
 
   listSessions: () =>
-    fetch('/api/sessions').then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
+    fetch(`${BASE}/api/sessions`).then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
 
   listPlugins: () =>
-    fetch('/api/plugins').then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
+    fetch(`${BASE}/api/plugins`).then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
 
   createSession: () =>
-    fetch('/api/sessions', { method: 'POST' }).then(r => json<{ id: string }>(r)).then(j => j.id),
+    fetch(`${BASE}/api/sessions`, { method: 'POST' }).then(r => json<{ id: string }>(r)).then(j => j.id),
 
   history: (sid: string) =>
-    fetch(`/api/sessions/${sid}/messages`).then(r => json<{ title: string; messages: WMessage[] }>(r)),
+    fetch(`${BASE}/api/sessions/${sid}/messages`).then(r => json<{ title: string; messages: WMessage[] }>(r)),
 
   approve: (sid: string, callId: string, decision: 'once' | 'session' | 'deny') =>
-    fetch(`/api/sessions/${sid}/approve`, {
+    fetch(`${BASE}/api/sessions/${sid}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ callId, decision }),
@@ -73,7 +79,7 @@ export const api = {
 
   /** 发送消息并消费 SSE 事件流 */
   async streamMessage(sid: string, text: string, onEvent: (ev: ServerEvent) => void, signal?: AbortSignal): Promise<void> {
-    const resp = await fetch(`/api/sessions/${sid}/messages`, {
+    const resp = await fetch(`${BASE}/api/sessions/${sid}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text }),
