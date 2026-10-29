@@ -152,6 +152,8 @@ export class AnthropicProvider implements Provider {
           if (d?.stop_reason) stopReason = d.stop_reason as string;
           const usage = j.usage as Record<string, number> | undefined;
           if (usage?.output_tokens) outputTokens = usage.output_tokens;
+          // 智谱端点在 message_start 里报 0，真实值在 message_delta（与官方行为不同，实测确认）
+          if (usage?.input_tokens) inputTokens = usage.input_tokens;
           break;
         }
         case 'message_stop': break;
