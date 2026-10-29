@@ -54,3 +54,11 @@
 3. 凭据永不入库、永不打印值、永不向 AI 索要（DPAPI 注入）
 4. 原型原则：**所见即承诺**，不放永远不实现的 UI
 5. 文章里的「已知待验证项」必须诚实标注（如 docker build 未实测）
+
+### PowerShell `iwr` 发中文 body 的编码坑（M6 发现）
+
+`Invoke-RestMethod -Body '{"text":"中文"}'` 在 Windows PowerShell 5.1 下默认按
+GBK/Latin-1 发送字节，服务端按 UTF-8 解码 → 中文变 `?????`（且会持久化到标题里）。
+**不是产品 bug，是测试客户端编码问题**——浏览器/Node 客户端全链路正常。
+正确姿势：`-ContentType 'application/json; charset=utf-8'` 配
+`[System.Text.Encoding]::UTF8.GetBytes($body)`，或直接用 Node/浏览器测试。

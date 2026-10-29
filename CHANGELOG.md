@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+v0.2.0 主题：**从「学习骨架」到「按公开标准运营的开源项目」**。
+一天冲刺 P0-P6 之后，用 M0-M6 六个里程碑补齐工程化、内核深度与文档深度。
+
 ### 文档（M5 · 文章深化第一批）
 
 - 新增《12-开源工程实践实录》：M0-M4 全部 GitHub 工作流归档——issue 先行/PR 模板/CI 抓 tsbuildinfo 真 bug 复盘/分支保护付费墙（403 实录）/tag 与 Release 语义/备忘 issue 分类学/变异验证/翻车实录（PAT scope、PS `--` 解析、coverage 误入库）/可复现命令速查
@@ -112,5 +117,6 @@
 - 凭据全程 DPAPI 加密存储 + 进程内存注入，明文永不落盘/入库
 - `config.json` 禁止出现任何凭据字段（读取时主动扫描拒绝）
 
-[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wsj502/water-ai-harness/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/wsj502/water-ai-harness/releases/tag/v0.1.0
