@@ -13,9 +13,12 @@
  *   start-secure.ps1 -- npx tsx apps/server/src/index.ts  # 注入 GLM 凭据
  */
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import {
   agentLoop, builtinTools, createProvider, loadPlugins, MockProvider,
   resolveConfig, type PluginRegistry, type Provider, type ToolUsePart,
@@ -161,6 +164,16 @@ app.post('/api/sessions/:id/messages', async c => {
 });
 
 const port = Number(process.env.WATER_PORT ?? 3210);
+
+// ---- 生产形态：托管 Web 构建产物（单进程交付；API 路由注册在前，优先级更高） ----
+const webDist = process.env.WATER_WEB_DIST ?? path.resolve(cfg.cwd, 'apps/web/dist');
+if (existsSync(webDist)) {
+  app.use('/*', serveStatic({ root: webDist }));
+  // SPA fallback：非 API 路径一律回 index.html，前端路由自己接管
+  app.get('*', serveStatic({ path: path.join(webDist, 'index.html') }));
+}
+
 serve({ fetch: app.fetch, port }, info => {
   console.log(`water server · http://127.0.0.1:${info.port} · ${mock ? 'MOCK 模式' : `${cfg.model} via ${cfg.protocol}`} · 工作区 ${cfg.cwd}`);
+  if (existsSync(webDist)) console.log(`web 静态托管: ${webDist}`);
 });
