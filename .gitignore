@@ -13,5 +13,8 @@ apps/desktop/src-tauri/target/
 .ai-secrets/
 # docker compose 的 Agent 工作区挂载点
 workspace/
+# 会话数据库（数据文件，不入库；.water/mcp.json 配置仍跟踪）
+.water/*.db
+.water/*.db-*
 # npm pack 产物
 *.tgz

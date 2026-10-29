@@ -24,6 +24,7 @@ import {
   resolveConfig, type PluginRegistry, type Provider, type ToolUsePart,
 } from '@water/core';
 import { SessionStore, type ApprovalDecision } from './session.js';
+import { SessionPersistence } from './persistence.js';
 
 const cfg = resolveConfig({});
 const mock = process.env.WATER_MOCK === '1';
@@ -42,7 +43,7 @@ const SYSTEM = [
   '回答使用中文，简洁、直接、技术导向。',
 ].join('\n');
 
-const store = new SessionStore();
+const store = new SessionStore(new SessionPersistence(cfg.cwd));
 const app = new Hono();
 
 // ---- 插件加载（启动时一次；开发期重启即重载） ----
@@ -85,6 +86,14 @@ app.get('/api/sessions/:id/messages', c => {
 app.post('/api/sessions', c => {
   const s = store.create();
   return c.json({ id: s.id }, 201);
+});
+
+app.delete('/api/sessions/:id', c => {
+  const s = store.get(c.req.param('id'));
+  if (s?.busy) return c.json({ error: '会话忙，不能删除' }, 409);
+  return store.delete(c.req.param('id'))
+    ? c.json({ ok: true })
+    : c.json({ error: 'session not found' }, 404);
 });
 
 app.post('/api/sessions/:id/approve', async c => {
@@ -159,6 +168,7 @@ app.post('/api/sessions/:id/messages', async c => {
     } finally {
       s.busy = false;
       s.denyAllPending();
+      store.save(s); // 消息处理结束 → 落库
     }
   });
 });

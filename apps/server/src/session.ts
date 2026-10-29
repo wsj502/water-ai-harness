@@ -17,7 +17,7 @@ interface PendingApproval {
 
 export class Session {
   readonly id: string;
-  readonly createdAt = Date.now();
+  createdAt = Date.now();
   title = '新会话';
   messages: WMessage[] = [];
   permissions = new PermissionEngine({ autoAllowLowRisk: true });
@@ -55,11 +55,38 @@ export class Session {
 export class SessionStore {
   private sessions = new Map<string, Session>();
 
+  constructor(private persistence?: import('./persistence.js').SessionPersistence) {
+    // 启动恢复：从 SQLite 读回历史会话
+    for (const r of persistence?.loadAll() ?? []) {
+      const s = new Session(r.id);
+      s.title = r.title;
+      s.createdAt = r.createdAt;
+      s.messages = r.messages;
+      this.sessions.set(r.id, s);
+    }
+  }
+
   create(): Session {
     const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const s = new Session(id);
     this.sessions.set(id, s);
+    this.save(s);
     return s;
+  }
+
+  /** 落库（每次消息处理完调用；事务整存整取） */
+  save(s: Session): void {
+    try {
+      this.persistence?.saveSession(s.id, s.title, s.createdAt, s.messages);
+    } catch (e) {
+      console.error(`[persistence] 会话 ${s.id} 落库失败:`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  delete(id: string): boolean {
+    const existed = this.sessions.delete(id);
+    if (existed) this.persistence?.deleteSession(id);
+    return existed;
   }
 
   get(id: string): Session | undefined { return this.sessions.get(id); }
