@@ -17,12 +17,13 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
-  agentLoop, builtinTools, createProvider, loadPlugins, loadFileConfig, MockProvider,
-  ProviderRegistry, resolveConfig, BUILTIN_MODELS, mergeModels, PROTOCOL_DEFAULTS,
+  agentLoop, builtinTools, compactMessages, createProvider, estimateMessagesTokens, loadPlugins,
+  loadFileConfig, MockProvider, ProviderRegistry, resolveConfig, BUILTIN_MODELS, mergeModels,
+  PROTOCOL_DEFAULTS, PROTOCOL_LABEL,
   type PluginRegistry, type Provider, type ToolUsePart,
 } from '@water/core';
 import { SessionStore, type ApprovalDecision, type Session, type SessionProtocol, type TaskRecord, type TaskStep } from './session.js';
@@ -53,16 +54,80 @@ const registry = new ProviderRegistry(
 
 const mockProvider = new MockProvider();
 
+// ---- SYSTEM prompt（M2）：env WATER_SYSTEM > config.json systemPrompt > 内置默认 ----
+// 工作区根有 AGENTS.md 则自动拼接为「项目上下文」（重启生效；凭据红线与模型无关，不受限）
+const DEFAULT_SYSTEM = [
+  '你是 Water，一个工作在当前代码仓库里的 AI 编程助手。',
+  '可用工具：read/write/edit/grep/glob/shell。优先小步快跑，改动前先读代码。',
+  '回答使用中文，简洁、直接、技术导向。',
+].join('\n');
+const SYSTEM_BASE = process.env.WATER_SYSTEM ?? fileCfg.systemPrompt ?? DEFAULT_SYSTEM;
+const agentsPath = path.join(cfg.cwd, 'AGENTS.md');
+const agentsMd = existsSync(agentsPath) ? readFileSync(agentsPath, 'utf8').slice(0, 8000) : null;
+const SYSTEM = agentsMd
+  ? `${SYSTEM_BASE}\n\n# 项目上下文（工作区 AGENTS.md）\n${agentsMd}`
+  : SYSTEM_BASE;
+
+/** 会话生效的上下文预算：强制 env > 模型注册表窗口 × 0.8（M2） */
+function contextBudget(s: Session): number | undefined {
+  const forced = Number(process.env.WATER_MAX_CONTEXT_TOKENS) || 0;
+  if (forced > 0) return forced;
+  const info = registry.find(s.model ?? cfg.model);
+  return info?.contextWindow ? Math.floor(info.contextWindow * 0.8) : undefined;
+}
+
+/** 内置斜杠命令（M2）：本地处理不进模型。返回回复文本；非内置命令返回 null */
+function runBuiltinCommand(text: string, s: Session): string | null {
+  const m = text.match(/^\/(\S+)\s*([\s\S]*)$/);
+  if (!m) return null;
+  const cmd = m[1]!, arg = m[2]!.trim();
+  switch (cmd) {
+    case 'model': {
+      const cur = s.model ?? cfg.model;
+      if (!arg) {
+        const lines = registry.list().map(mi => {
+          const envName = mi.apiKeyEnv ?? PROTOCOL_DEFAULTS[mi.protocol].apiKeyEnv;
+          const ready = mock || apiKeyOf(envName) !== null;
+          return `- ${mi.id} [${PROTOCOL_LABEL[mi.protocol]}]${mi.thinking ? ' 💭' : ''}${ready ? '' : '（缺凭据 ' + envName + '）'}${mi.id === cur ? ' ← 当前' : ''}`;
+        });
+        return `可用模型（/model <id> 切换本会话）：\n${lines.join('\n')}\n当前：${cur}${s.model ? '（会话覆盖）' : '（服务端默认）'}`;
+      }
+      const err = applySessionConfig(s, { model: arg });
+      if (err) return err;
+      store.save(s);
+      return `已切换本会话模型 → ${s.model}（${s.protocol}）`;
+    }
+    case 'compact': {
+      const budget = contextBudget(s) ?? Infinity;
+      const comp = compactMessages(s.messages, budget);
+      if (!comp.compacted) {
+        return `无需压缩：估算 ${estimateMessagesTokens(s.messages)} token，预算 ${budget === Infinity ? '（未配置，跟随模型窗口）' : budget}`;
+      }
+      store.save(s);
+      return `上下文已压缩：估算 ${comp.estBefore} → ${comp.estAfter} token（丢弃 ${comp.droppedMessages} 条旧消息，截断 ${comp.truncatedResults} 条工具结果）`;
+    }
+    case 'system':
+      return `当前生效 SYSTEM（${SYSTEM.length} 字符${agentsMd ? '，含工作区 AGENTS.md' : ''}，前 600 字预览）：\n${SYSTEM.slice(0, 600)}${SYSTEM.length > 600 ? '\n…' : ''}`;
+    default:
+      return null; // 交给插件命令
+  }
+}
+
 /** 会话运行时：把「会话覆盖 + 服务端默认」解析成一次可执行的 provider 调用 */
-type SessionRuntime = { protocol: string; model: string; provider: Provider } | { error: string };
+type SessionRuntime = { protocol: string; model: string; provider: Provider; contextWindow?: number } | { error: string };
 
 function sessionRuntime(s: Session): SessionRuntime {
-  if (mock) return { protocol: 'mock', model: s.model ?? cfg.model, provider: mockProvider };
+  if (mock) {
+    const cw = registry.find(s.model ?? cfg.model)?.contextWindow;
+    return { protocol: 'mock', model: s.model ?? cfg.model, provider: mockProvider, ...(cw !== undefined ? { contextWindow: cw } : {}) };
+  }
   const model = s.model ?? cfg.model;
   const info = registry.find(model);
   if (info) {
     const acq = registry.acquire(info);
-    return acq.ok ? { protocol: info.protocol, model: info.id, provider: acq.provider } : { error: acq.error };
+    return acq.ok
+      ? { protocol: info.protocol, model: info.id, provider: acq.provider, ...(info.contextWindow !== undefined ? { contextWindow: info.contextWindow } : {}) }
+      : { error: acq.error };
   }
   if (s.model) {
     return { error: `未知模型 ${s.model}（自定义模型可能已被移除），请在模型菜单重选` };
@@ -71,12 +136,6 @@ function sessionRuntime(s: Session): SessionRuntime {
   if (!cfg.apiKey) return { error: `缺少凭据 ${cfg.apiKeyEnv}` };
   return { protocol: cfg.protocol, model: cfg.model, provider: createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey }) };
 }
-
-const SYSTEM = [
-  '你是 Water，一个工作在当前代码仓库里的 AI 编程助手。',
-  '可用工具：read/write/edit/grep/glob/shell。优先小步快跑，改动前先读代码。',
-  '回答使用中文，简洁、直接、技术导向。',
-].join('\n');
 
 const store = new SessionStore(new SessionPersistence(cfg.cwd));
 const app = new Hono();
@@ -288,6 +347,20 @@ app.post('/api/sessions/:id/messages', async c => {
 
   let text = body.text.trim();
 
+  // 内置斜杠命令（M2）：本地处理，不进模型
+  const builtinReply = runBuiltinCommand(text, s);
+  if (builtinReply !== null) {
+    s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
+    if (s.title === '新会话') s.title = text.slice(0, 30);
+    s.messages.push({ role: 'assistant', parts: [{ type: 'text', text: builtinReply }] });
+    store.save(s);
+    return streamSSE(c, async stream => {
+      await stream.writeSSE({ event: 'turn_start', data: JSON.stringify({ type: 'turn_start', turn: 1, model: s.model ?? cfg.model }) });
+      await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ type: 'text_delta', text: builtinReply }) });
+      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'end' }) });
+    });
+  }
+
   // 斜杠命令展开：/review src/x.ts → 模板替换 $ARGUMENTS
   const cmdMatch = text.match(/^\/(\S+)\s*([\s\S]*)$/);
   if (cmdMatch) {
@@ -298,6 +371,12 @@ app.post('/api/sessions/:id/messages', async c => {
   // M1：按「会话覆盖 + 服务端默认」解析本次运行的模型与 provider（失败快速返回，不污染历史）
   const rt = sessionRuntime(s);
   if ('error' in rt) return c.json({ error: rt.error }, 400);
+
+  // M2：上下文预算（强制 env > 模型窗口 × 0.8）
+  const forced = Number(process.env.WATER_MAX_CONTEXT_TOKENS) || 0;
+  const budget = forced > 0 ? forced
+    : rt.contextWindow ? Math.floor(rt.contextWindow * 0.8)
+    : undefined;
 
   s.busy = true;
   s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
@@ -332,6 +411,7 @@ app.post('/api/sessions/:id/messages', async c => {
     try {
       for await (const ev of agentLoop({
         provider: rt.provider, model: rt.model, system: SYSTEM, messages: s.messages,
+        ...(budget !== undefined ? { maxContextTokens: budget } : {}),
         tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
         toolCtx: { cwd: cfg.cwd }, approve,
         maxTurns: 20, signal: ac.signal,

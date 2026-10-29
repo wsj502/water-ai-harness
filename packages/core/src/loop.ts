@@ -10,6 +10,7 @@
 import type {
   LoopEvent, Part, Provider, ToolUsePart, WMessage,
 } from './types.js';
+import { compactMessages } from './context.js';
 import { PermissionEngine } from './permissions.js';
 import type { Tool, ToolContext } from './tools/index.js';
 import type { PluginHooks } from './plugin/types.js';
@@ -24,6 +25,8 @@ export interface AgentLoopOptions {
   toolCtx: ToolContext;
   maxTurns?: number;              // 防失控上限，默认 20
   maxTokens?: number;
+  /** 上下文 token 预算（超窗触发确定性压缩；缺省不限） */
+  maxContextTokens?: number;
   /** 需要用户审批时的回调（CLI/Web 各自实现交互） */
   approve?: (call: ToolUsePart, reason: string) => Promise<'once' | 'session' | 'deny'>;
   /** 插件钩子（P5）：beforeToolCall 返回 false 可阻止执行 */
@@ -43,6 +46,19 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
+
+    // ---- 上下文预算检查（M2）：超窗则确定性压缩，UI 可见 ----
+    if (opts.maxContextTokens !== undefined) {
+      const comp = compactMessages(opts.messages, opts.maxContextTokens);
+      if (comp.compacted) {
+        yield {
+          type: 'compacted',
+          droppedMessages: comp.droppedMessages, truncatedResults: comp.truncatedResults,
+          estBefore: comp.estBefore, estAfter: comp.estAfter,
+        };
+      }
+    }
+
     yield { type: 'turn_start', turn, model: opts.model };
 
     // ---- 一轮模型调用：流式收集 ----
@@ -57,6 +73,7 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
       messages: opts.messages,
       tools: specs,
       ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
     })) {
       switch (ev.type) {
         case 'text_delta':
@@ -88,6 +105,9 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
       return;
     }
 
+    // 中断：丢弃半截 assistant 消息（不完整的输出没有回传价值，入历史反而污染下一轮）
+    if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
+
     // 本轮 assistant 消息落历史
     if (thinkBuf) parts.push({ type: 'thinking', text: thinkBuf });
     if (textBuf) parts.push({ type: 'text', text: textBuf });
@@ -102,7 +122,6 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
     // ---- 执行工具：审批 → 执行 → 结果回填 ----
     const resultParts: Part[] = [];
-    let anyDenied = false;
 
     for (const call of toolCalls) {
       yield { type: 'tool_pending', call };
@@ -134,7 +153,6 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
       }
 
       if (decision === 'deny') {
-        anyDenied = true;
         yield { type: 'tool_denied', call };
         resultParts.push({
           type: 'tool_result', toolUseId: call.id,
@@ -181,9 +199,6 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
     // 结果回填为 tool 消息，进入下一轮
     opts.messages.push({ role: 'tool', parts: resultParts });
-    if (anyDenied && toolCalls.length === resultParts.filter(p => (p as { isError?: boolean }).isError).length) {
-      // 全部工具都被拒/出错时多给模型一轮解释机会，随后由 stopReason=end 收尾
-    }
   }
 
   yield { type: 'finish', reason: 'max_turns', message: `达到最大轮次 ${maxTurns}` };

@@ -77,6 +77,8 @@ export interface ChatRequest {
   maxTokens?: number;
   /** 0~1，缺省由 provider 决定 */
   temperature?: number;
+  /** 调用方中断信号（透传到 fetch；中断不重试） */
+  signal?: AbortSignal;
 }
 
 export interface ProviderConfig {
@@ -106,4 +108,5 @@ export type LoopEvent =
   | { type: 'tool_denied'; call: ToolUsePart }
   | { type: 'tool_result'; call: ToolUsePart; result: string; isError: boolean; durationMs: number }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
+  | { type: 'compacted'; droppedMessages: number; truncatedResults: number; estBefore: number; estAfter: number }
   | { type: 'finish'; reason: 'end' | 'max_turns' | 'aborted' | 'error'; message?: string };

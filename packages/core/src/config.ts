@@ -39,6 +39,8 @@ interface FileConfig {
   protocol?: 'anthropic' | 'openai';
   baseUrl?: string;
   model?: string;
+  /** M2：自定义 SYSTEM prompt（env WATER_SYSTEM 优先于此） */
+  systemPrompt?: string;
   /** M1：自定义模型表（与内置表合并，id 冲突时自定义优先） */
   models?: ModelInfo[];
 }

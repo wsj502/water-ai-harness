@@ -41,6 +41,9 @@ jobs:
       - name: Agent Loop 离线闭环测试（mock）
         run: npx tsx scripts/loop-mock-test.ts
 
+      - name: 上下文管理 + 容错重试测试（离线）
+        run: npx tsx scripts/test-context.ts
+
       - name: 全量构建（core / server / cli / web）
         run: npm run build
 

@@ -11,6 +11,7 @@ export type UiBlock =
   | { kind: 'user'; text: string; ts?: number }
   | { kind: 'text'; text: string; ts?: number }
   | { kind: 'thinking'; text: string; ts?: number }
+  | { kind: 'notice'; text: string; ts?: number }
   | { kind: 'tool'; call: ToolUsePart; status: ToolStatus; result?: string; durationMs?: number; ts?: number };
 
 /** 把 LoopEvent 应用到块序列（返回新数组，供 React setState） */
@@ -54,6 +55,13 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
         };
       });
     }
+    case 'compacted':
+      next.push({
+        kind: 'notice',
+        text: `🗜 上下文已压缩：${ev.estBefore} → ${ev.estAfter} token（丢弃 ${ev.droppedMessages} 条旧消息${ev.truncatedResults ? `，截断 ${ev.truncatedResults} 条工具结果` : ''}）`,
+        ts: Date.now(),
+      });
+      break;
     case 'turn_start':
       break; // 轮次切换天然由块边界表达
     default:
