@@ -25,7 +25,8 @@ export interface TaskRecord {
   title: string;
   startedAt: number;
   finishedAt: number;
-  status: 'done' | 'error' | 'aborted' | 'max_turns';
+  /** running：Loop 进行中（仅内存态，落库时必定已是终态） */
+  status: 'running' | 'done' | 'error' | 'aborted' | 'max_turns';
   steps: TaskStep[];
   tokensIn: number;
   tokensOut: number;
@@ -42,6 +43,9 @@ export class Session {
   title = '新会话';
   messages: WMessage[] = [];
   permissions = new PermissionEngine({ autoAllowLowRisk: true });
+  /** 会话级 token 累计（侧栏「12.4k tok」的真实数据源） */
+  tokensIn = 0;
+  tokensOut = 0;
   /** 同一时刻只允许一条消息在跑（MVP 约束，避免历史交错） */
   busy = false;
   private pending = new Map<string, PendingApproval>();
@@ -86,20 +90,26 @@ export class SessionStore {
       s.messages = r.messages;
       this.sessions.set(r.id, s);
     }
-    // 恢复任务记录
+    // 恢复任务记录（running 态只存在于内存；若落库盘里出现，说明上次进程被杀 → 记为中断）
     for (const t of persistence?.loadTasks() ?? []) {
+      const status = t.status === 'running' ? 'aborted' : t.status;
       this.tasks.push({
         id: t.id, sessionId: t.session_id, title: t.title,
         startedAt: t.started_at, finishedAt: t.finished_at,
-        status: t.status as TaskRecord['status'],
+        status: status as TaskRecord['status'],
         steps: JSON.parse(t.steps) as TaskStep[],
         tokensIn: t.tokens_in, tokensOut: t.tokens_out,
       });
     }
   }
 
-  addTask(t: TaskRecord): void {
+  /** Loop 开始即建档：任务页可见「运行中」（仅内存，不落库） */
+  beginTask(t: TaskRecord): void {
     this.tasks.unshift(t);
+  }
+
+  /** Loop 结束：任务已有终态，落库 */
+  finishTask(t: TaskRecord): void {
     try {
       this.persistence?.saveTask({
         id: t.id, session_id: t.sessionId, title: t.title,
@@ -145,6 +155,7 @@ export class SessionStore {
       .map(s => ({
         id: s.id, title: s.title, createdAt: s.createdAt,
         turns: s.messages.filter(m => m.role === 'user').length,
+        tokensIn: s.tokensIn, tokensOut: s.tokensOut,
         busy: s.busy, pendingApprovals: s.pendingCount,
       }));
   }

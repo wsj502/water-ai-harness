@@ -554,6 +554,8 @@ body {
 .task-row .bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
 .task-row .bar i.done { background: var(--green); }
 .task-row .bar i.fail { background: var(--red); }
+.task-row .bar i.run { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.task-filters { display: flex; gap: 8px; margin-bottom: 14px; }
 .task-detail {
   border-top: 1px dashed var(--border-strong); margin-top: 4px; padding-top: 10px;
   font-size: 12.5px; color: var(--text-1);

@@ -8,10 +8,10 @@ import type { ApprovalRequiredEvent, ServerEvent } from '../api';
 export type ToolStatus = 'running' | 'waiting' | 'done' | 'error' | 'denied';
 
 export type UiBlock =
-  | { kind: 'user'; text: string }
-  | { kind: 'text'; text: string }
-  | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; call: ToolUsePart; status: ToolStatus; result?: string; durationMs?: number };
+  | { kind: 'user'; text: string; ts?: number }
+  | { kind: 'text'; text: string; ts?: number }
+  | { kind: 'thinking'; text: string; ts?: number }
+  | { kind: 'tool'; call: ToolUsePart; status: ToolStatus; result?: string; durationMs?: number; ts?: number };
 
 /** 把 LoopEvent 应用到块序列（返回新数组，供 React setState） */
 export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
@@ -23,18 +23,18 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
       if (last?.kind === 'text') {
         next[next.length - 1] = { ...last, text: last.text + ev.text };
       } else {
-        next.push({ kind: 'text', text: ev.text });
+        next.push({ kind: 'text', text: ev.text, ts: Date.now() });
       }
       break;
     case 'thinking_delta':
       if (last?.kind === 'thinking') {
         next[next.length - 1] = { ...last, text: last.text + ev.text };
       } else {
-        next.push({ kind: 'thinking', text: ev.text });
+        next.push({ kind: 'thinking', text: ev.text, ts: Date.now() });
       }
       break;
     case 'tool_pending':
-      next.push({ kind: 'tool', call: ev.call, status: 'running' });
+      next.push({ kind: 'tool', call: ev.call, status: 'running', ts: Date.now() });
       break;
     case 'approval_required':
       return next.map(b =>

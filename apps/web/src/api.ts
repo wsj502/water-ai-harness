@@ -16,6 +16,8 @@ export interface ServerConfig {
   model: string;
   workspace: string;
   version: string;
+  hasKey?: boolean;
+  apiKeyEnv?: string;
 }
 
 export interface SessionMeta {
@@ -23,6 +25,8 @@ export interface SessionMeta {
   title: string;
   createdAt: number;
   turns: number;
+  tokensIn: number;
+  tokensOut: number;
   busy: boolean;
   pendingApprovals: number;
 }
@@ -68,10 +72,17 @@ export interface TaskRecord {
   title: string;
   startedAt: number;
   finishedAt: number;
-  status: 'done' | 'error' | 'aborted' | 'max_turns';
+  status: 'running' | 'done' | 'error' | 'aborted' | 'max_turns';
   steps: TaskStep[];
   tokensIn: number;
   tokensOut: number;
+}
+
+/** 审批规则表行（GET /api/permissions） */
+export interface PermissionRuleInfo {
+  tool: string;
+  risk: 'low' | 'medium' | 'high';
+  policy: string;
 }
 
 export interface FileNode {
@@ -92,6 +103,9 @@ export const api = {
 
   listTasks: () =>
     fetch(`${BASE}/api/tasks`).then(r => json<{ tasks: TaskRecord[] }>(r)).then(j => j.tasks),
+
+  permissions: () =>
+    fetch(`${BASE}/api/permissions`).then(r => json<{ autoAllowLowRisk: boolean; rules: PermissionRuleInfo[] }>(r)),
 
   fileTree: () =>
     fetch(`${BASE}/api/files/tree`).then(r => json<{ root: string; tree: FileNode[] }>(r)),

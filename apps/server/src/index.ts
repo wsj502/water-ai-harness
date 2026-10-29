@@ -59,6 +59,19 @@ app.get('/api/config', c => c.json({
   model: cfg.model,
   workspace: cfg.cwd,
   version: '0.1.0',
+  // 只暴露「有没有」，永不暴露 key 本身
+  hasKey: mock || Boolean(cfg.apiKey),
+  apiKeyEnv: cfg.apiKeyEnv,
+}));
+
+/** 审批规则表：由工具风险级 + 默认策略派生，与内核 PermissionEngine 行为一致 */
+app.get('/api/permissions', c => c.json({
+  autoAllowLowRisk: true,
+  rules: allTools.map(t => ({
+    tool: t.spec.name,
+    risk: t.risk,
+    policy: t.risk === 'low' ? '自动放行' : '每次询问',
+  })),
 }));
 
 app.get('/api/sessions', c => c.json({ sessions: store.list() }));
@@ -207,13 +220,14 @@ app.post('/api/sessions/:id/messages', async c => {
       return s.waitApproval(call);
     };
 
-    // 任务记录：收集这次运行的步骤与 token
+    // 任务记录：Loop 开始即建档（任务页可见「运行中」），结束时更新为终态并落库
     const task: TaskRecord = {
       id: `t_${Date.now().toString(36)}`,
       sessionId: s.id, title: s.title,
-      startedAt: Date.now(), finishedAt: 0, status: 'done',
+      startedAt: Date.now(), finishedAt: 0, status: 'running',
       steps: [], tokensIn: 0, tokensOut: 0,
     };
+    store.beginTask(task);
 
     try {
       for await (const ev of agentLoop({
@@ -234,6 +248,7 @@ app.post('/api/sessions/:id/messages', async c => {
           task.steps.push({ tool: ev.call.name, summary: '', ok: null, durationMs: 0 });
         } else if (ev.type === 'usage') {
           task.tokensIn += ev.inputTokens; task.tokensOut += ev.outputTokens;
+          s.tokensIn += ev.inputTokens; s.tokensOut += ev.outputTokens;
         } else if (ev.type === 'finish') {
           task.status = ev.reason === 'end' ? 'done'
             : ev.reason === 'error' ? 'error'
@@ -249,7 +264,7 @@ app.post('/api/sessions/:id/messages', async c => {
       });
     } finally {
       task.finishedAt = Date.now();
-      store.addTask(task);
+      store.finishTask(task); // 终态落库
       s.busy = false;
       s.denyAllPending();
       store.save(s); // 消息处理结束 → 落库
