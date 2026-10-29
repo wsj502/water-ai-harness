@@ -21,10 +21,11 @@ import { existsSync } from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
-  agentLoop, builtinTools, createProvider, loadPlugins, MockProvider,
-  resolveConfig, type PluginRegistry, type Provider, type ToolUsePart,
+  agentLoop, builtinTools, createProvider, loadPlugins, loadFileConfig, MockProvider,
+  ProviderRegistry, resolveConfig, BUILTIN_MODELS, mergeModels, PROTOCOL_DEFAULTS,
+  type PluginRegistry, type Provider, type ToolUsePart,
 } from '@water/core';
-import { SessionStore, type ApprovalDecision, type TaskRecord, type TaskStep } from './session.js';
+import { SessionStore, type ApprovalDecision, type Session, type SessionProtocol, type TaskRecord, type TaskStep } from './session.js';
 import { SessionPersistence } from './persistence.js';
 
 const cfg = resolveConfig({});
@@ -34,9 +35,42 @@ if (!mock && !cfg.apiKey) {
   process.exit(1);
 }
 
-const provider: Provider = mock
-  ? new MockProvider()
-  : createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey! });
+/** 凭据读取通道：start-secure 注入的环境变量（名字来自注册表，值永不出服务端） */
+const apiKeyOf = (envName: string): string | null => process.env[envName] ?? null;
+
+/**
+ * M1 模型注册表：内置模型 + ~/.water/config.json models[] 自定义模型。
+ * Provider 实例按 (protocol, baseUrl, apiKeyEnv) 缓存，多会话共享。
+ */
+const fileCfg = loadFileConfig();
+const registry = new ProviderRegistry(
+  mergeModels(BUILTIN_MODELS, fileCfg.models ?? []),
+  {
+    baseUrlOf: p => process.env.WATER_BASE_URL ?? fileCfg.baseUrl ?? PROTOCOL_DEFAULTS[p].baseUrl,
+    apiKeyOf,
+  },
+);
+
+const mockProvider = new MockProvider();
+
+/** 会话运行时：把「会话覆盖 + 服务端默认」解析成一次可执行的 provider 调用 */
+type SessionRuntime = { protocol: string; model: string; provider: Provider } | { error: string };
+
+function sessionRuntime(s: Session): SessionRuntime {
+  if (mock) return { protocol: 'mock', model: s.model ?? cfg.model, provider: mockProvider };
+  const model = s.model ?? cfg.model;
+  const info = registry.find(model);
+  if (info) {
+    const acq = registry.acquire(info);
+    return acq.ok ? { protocol: info.protocol, model: info.id, provider: acq.provider } : { error: acq.error };
+  }
+  if (s.model) {
+    return { error: `未知模型 ${s.model}（自定义模型可能已被移除），请在模型菜单重选` };
+  }
+  // 兼容路径：默认模型不在注册表（老配置只写了 baseUrl/model、没写 models[]）→ 按启动配置手工构造
+  if (!cfg.apiKey) return { error: `缺少凭据 ${cfg.apiKeyEnv}` };
+  return { protocol: cfg.protocol, model: cfg.model, provider: createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey }) };
+}
 
 const SYSTEM = [
   '你是 Water，一个工作在当前代码仓库里的 AI 编程助手。',
@@ -63,6 +97,51 @@ app.get('/api/config', c => c.json({
   hasKey: mock || Boolean(cfg.apiKey),
   apiKeyEnv: cfg.apiKeyEnv,
 }));
+
+/**
+ * M1 模型清单：注册表全量 + 各模型凭据是否就绪 + 服务端默认。
+ * Web 模型切换菜单的唯一数据源；baseUrl 展示但不接受前端覆盖（防 key 外泄）。
+ */
+app.get('/api/models', c => c.json({
+  models: registry.list().map(m => ({
+    ...m,
+    hasKey: mock || apiKeyOf(m.apiKeyEnv ?? PROTOCOL_DEFAULTS[m.protocol].apiKeyEnv) !== null,
+  })),
+  default: { protocol: cfg.protocol, model: cfg.model },
+  mock,
+}));
+
+/** 校验并应用会话级配置（建会话与 PATCH 共用）。返回错误信息或 null */
+function applySessionConfig(s: Session, body: { protocol?: unknown; model?: unknown; reset?: unknown; [k: string]: unknown }): string | null {
+  // 严格字段白名单：baseUrl 等只能来自服务端配置（防 key 外泄通道），越权字段显式 400 而非静默忽略
+  for (const k of Object.keys(body)) {
+    if (k !== 'protocol' && k !== 'model' && k !== 'reset') {
+      return `不支持的配置字段: ${k}（baseUrl 等只能由服务端配置；Web 仅可从注册表选择模型）`;
+    }
+  }
+  if (body.reset === true) { s.protocol = null; s.model = null; return null; }
+  let protocol: SessionProtocol | null = null;
+  if (body.protocol !== undefined && body.protocol !== null) {
+    if (body.protocol !== 'anthropic' && body.protocol !== 'openai') return 'protocol 必须是 anthropic | openai';
+    protocol = body.protocol;
+  }
+  let model: string | null = null;
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== 'string' || !body.model.trim()) return 'model 必须是非空字符串';
+    const info = registry.find(body.model.trim());
+    if (!info) return `未知模型 ${body.model}（不在注册表：内置 + ~/.water/config.json models[]）`;
+    model = info.id;
+    // 模型自带协议：以模型为准，避免「openai 协议配 glm 模型」的错配
+    protocol = info.protocol;
+  } else if (protocol) {
+    // 只切协议：模型跟随该协议默认，除非当前模型本就属于新协议
+    const cur = s.model ? registry.find(s.model) : undefined;
+    if (!cur || cur.protocol !== protocol) model = PROTOCOL_DEFAULTS[protocol].model;
+  }
+  if (protocol) s.protocol = protocol;
+  if (model !== null) s.model = model;
+  return null;
+}
 
 /** 审批规则表：由工具风险级 + 默认策略派生，与内核 PermissionEngine 行为一致 */
 app.get('/api/permissions', c => c.json({
@@ -151,9 +230,26 @@ app.get('/api/sessions/:id/messages', c => {
   return c.json({ title: s.title, messages: s.messages });
 });
 
-app.post('/api/sessions', c => {
+app.post('/api/sessions', async c => {
+  const body = await c.req.json<{ protocol?: unknown; model?: unknown }>().catch(() => ({}));
   const s = store.create();
-  return c.json({ id: s.id }, 201);
+  const err = applySessionConfig(s, body ?? {});
+  if (err) { store.delete(s.id); return c.json({ error: err }, 400); }
+  store.save(s);
+  return c.json({ id: s.id, protocol: s.protocol, model: s.model }, 201);
+});
+
+/** M1：会话级模型/协议切换（运行时生效，无需重启进程；busy 中拒绝） */
+app.patch('/api/sessions/:id/config', async c => {
+  const s = store.get(c.req.param('id'));
+  if (!s) return c.json({ error: 'session not found' }, 404);
+  if (s.busy) return c.json({ error: '会话忙：处理中不可切换模型' }, 409);
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ error: '请求体必须是合法 JSON' }, 400);
+  const err = applySessionConfig(s, body);
+  if (err) return c.json({ error: err }, 400);
+  store.save(s);
+  return c.json({ ok: true, protocol: s.protocol, model: s.model });
 });
 
 app.delete('/api/sessions/:id', c => {
@@ -199,6 +295,10 @@ app.post('/api/sessions/:id/messages', async c => {
     if (cmd) text = cmd.template.replace(/\$ARGUMENTS/g, cmdMatch[2] ?? '');
   }
 
+  // M1：按「会话覆盖 + 服务端默认」解析本次运行的模型与 provider（失败快速返回，不污染历史）
+  const rt = sessionRuntime(s);
+  if ('error' in rt) return c.json({ error: rt.error }, 400);
+
   s.busy = true;
   s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
   if (s.title === '新会话') s.title = body.text.trim().slice(0, 30);
@@ -231,7 +331,7 @@ app.post('/api/sessions/:id/messages', async c => {
 
     try {
       for await (const ev of agentLoop({
-        provider, model: cfg.model, system: SYSTEM, messages: s.messages,
+        provider: rt.provider, model: rt.model, system: SYSTEM, messages: s.messages,
         tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
         toolCtx: { cwd: cfg.cwd }, approve,
         maxTurns: 20, signal: ac.signal,

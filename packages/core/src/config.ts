@@ -5,6 +5,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { ModelInfo } from './models.js';
 
 export interface WaterConfig {
   protocol: 'anthropic' | 'openai';
@@ -22,10 +23,24 @@ export interface ConfigFlags {
   cwd?: string;
 }
 
+/** 自定义模型条目（config.json models[]）：只收元数据，不收凭据 */
+interface CustomModelEntry {
+  id?: unknown;
+  protocol?: unknown;
+  label?: unknown;
+  vendor?: unknown;
+  contextWindow?: unknown;
+  thinking?: unknown;
+  baseUrl?: unknown;
+  apiKeyEnv?: unknown;
+}
+
 interface FileConfig {
   protocol?: 'anthropic' | 'openai';
   baseUrl?: string;
   model?: string;
+  /** M1：自定义模型表（与内置表合并，id 冲突时自定义优先） */
+  models?: ModelInfo[];
 }
 
 export const PROTOCOL_DEFAULTS = {
@@ -41,12 +56,42 @@ export const PROTOCOL_DEFAULTS = {
   },
 } as const;
 
+/** 环境变量名的形状（防误贴真实 key：key 值不会匹配这个模式） */
+const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/** 校验并规范化 config.json 里的自定义模型条目；非法即抛错（启动期暴露问题） */
+function parseCustomModels(raw: unknown, src: string): ModelInfo[] {
+  if (!Array.isArray(raw)) throw new Error(`${src} models 字段必须是数组`);
+  return raw.map((e, i) => {
+    const m = e as CustomModelEntry;
+    const at = `${src} models[${i}]`;
+    if (typeof m.id !== 'string' || !m.id.trim()) throw new Error(`${at} 缺少合法 id`);
+    if (m.protocol !== 'anthropic' && m.protocol !== 'openai') {
+      throw new Error(`${at} protocol 必须是 anthropic | openai`);
+    }
+    if (m.apiKeyEnv !== undefined && (typeof m.apiKeyEnv !== 'string' || !ENV_NAME_RE.test(m.apiKeyEnv))) {
+      throw new Error(`${at} apiKeyEnv 必须是环境变量名（大写字母/数字/下划线），不是 key 本身`);
+    }
+    if (m.baseUrl !== undefined && typeof m.baseUrl !== 'string') throw new Error(`${at} baseUrl 必须是字符串`);
+    return {
+      id: m.id.trim(),
+      protocol: m.protocol,
+      label: typeof m.label === 'string' ? m.label : m.id,
+      vendor: typeof m.vendor === 'string' ? m.vendor : '自定义',
+      ...(typeof m.contextWindow === 'number' ? { contextWindow: m.contextWindow } : {}),
+      ...(m.thinking === true ? { thinking: true } : {}),
+      ...(typeof m.baseUrl === 'string' ? { baseUrl: m.baseUrl } : {}),
+      ...(typeof m.apiKeyEnv === 'string' ? { apiKeyEnv: m.apiKeyEnv } : {}),
+    } satisfies ModelInfo;
+  });
+}
+
 export function loadFileConfig(): FileConfig {
   const p = path.join(homedir(), '.water', 'config.json');
   if (!existsSync(p)) return {};
-  let j: FileConfig;
+  let j: FileConfig & { models?: unknown };
   try {
-    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig;
+    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig & { models?: unknown };
   } catch (e) {
     throw new Error(`读取 ~/.water/config.json 失败: ${e instanceof Error ? e.message : e}`);
   }
@@ -56,7 +101,9 @@ export function loadFileConfig(): FileConfig {
       throw new Error(`config.json 不允许存放凭据字段: ${k}（凭据只走环境变量）`);
     }
   }
-  return j;
+  const { models: rawModels, ...rest } = j as FileConfig & { models?: unknown };
+  if (rawModels === undefined) return rest;
+  return { ...rest, models: parseCustomModels(rawModels, '~/.water/config.json') };
 }
 
 export function resolveConfig(flags: ConfigFlags = {}): WaterConfig {

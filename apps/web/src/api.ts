@@ -29,6 +29,29 @@ export interface SessionMeta {
   tokensOut: number;
   busy: boolean;
   pendingApprovals: number;
+  /** 会话级覆盖（null/缺省 = 跟随服务端默认） */
+  protocol?: string | null;
+  model?: string | null;
+}
+
+/** 模型注册表条目（GET /api/models） */
+export interface ModelInfo {
+  id: string;
+  protocol: 'anthropic' | 'openai';
+  label: string;
+  vendor: string;
+  contextWindow?: number;
+  thinking?: boolean;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  /** 该模型凭据是否就绪（服务端视角；false 时选它会在发消息时报错） */
+  hasKey?: boolean;
+}
+
+export interface ModelsResponse {
+  models: ModelInfo[];
+  default: { protocol: string; model: string };
+  mock: boolean;
 }
 
 /** 服务端在 Loop 之外补发的审批请求事件 */
@@ -95,6 +118,8 @@ export interface FileNode {
 export const api = {
   config: () => fetch(`${BASE}/api/config`).then(r => json<ServerConfig>(r)),
 
+  models: () => fetch(`${BASE}/api/models`).then(r => json<ModelsResponse>(r)),
+
   listSessions: () =>
     fetch(`${BASE}/api/sessions`).then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
 
@@ -114,8 +139,20 @@ export const api = {
     fetch(`${BASE}/api/files/content?path=${encodeURIComponent(path)}`)
       .then(r => json<{ path: string; size: number; content: string }>(r)),
 
-  createSession: () =>
-    fetch(`${BASE}/api/sessions`, { method: 'POST' }).then(r => json<{ id: string }>(r)).then(j => j.id),
+  createSession: (init?: { model?: string; protocol?: string }) =>
+    fetch(`${BASE}/api/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(init ?? {}),
+    }).then(r => json<{ id: string; protocol: string | null; model: string | null }>(r)),
+
+  /** 会话级模型/协议切换（M1）；reset:true 回到服务端默认 */
+  setSessionConfig: (sid: string, cfg: { model?: string; protocol?: string; reset?: boolean }) =>
+    fetch(`${BASE}/api/sessions/${sid}/config`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(cfg),
+    }).then(r => json<{ ok: boolean; protocol: string | null; model: string | null }>(r)),
 
   history: (sid: string) =>
     fetch(`${BASE}/api/sessions/${sid}/messages`).then(r => json<{ title: string; messages: WMessage[] }>(r)),
