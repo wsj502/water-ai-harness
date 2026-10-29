@@ -46,6 +46,16 @@ function globToRegExp(pattern: string): RegExp {
       if (pattern[i + 1] === '*') { re += '.*'; i += 2; }
       else { re += '[^/\\\\]*'; i += 1; }
     } else if (c === '?') { re += '[^/\\\\]'; i += 1; }
+    else if (c === '{') {
+      // {a,b} 交替
+      const close = pattern.indexOf('}', i);
+      if (close > i) {
+        const alts = pattern.slice(i + 1, close).split(',')
+          .map(s => s.replace(/[.+^${}()|[\]\\]/g, '\\$&'));
+        re += `(?:${alts.join('|')})`;
+        i = close + 1;
+      } else { re += '\\{'; i += 1; }
+    }
     else { re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&'); i += 1; }
   }
   return new RegExp(`^${re}$`, 'i');

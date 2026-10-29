@@ -1,5 +1,5 @@
 import {
-  agentLoop, createProvider, builtinTools, PermissionEngine,
+  agentLoop, createProvider, builtinTools, PermissionEngine, MockProvider,
   type WMessage,
 } from '@water/core';
 import type { WaterConfig } from '../config.js';
@@ -18,15 +18,18 @@ export interface RunOptions {
 }
 
 export async function cmdRun(task: string, cfg: WaterConfig, opts: RunOptions): Promise<void> {
-  if (!cfg.apiKey) {
-    console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure.ps1 启动以注入 DPAPI 凭据。`);
+  const mock = process.env.WATER_MOCK === '1';
+  if (!mock && !cfg.apiKey) {
+    console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure.ps1 启动以注入 DPAPI 凭据，或 WATER_MOCK=1 离线体验。`);
     process.exit(1);
   }
   if (opts.yes && !opts.json) {
     console.error('\x1b[33m⚠ --yes 已开启：所有工具调用将自动批准，请确认任务可信。\x1b[0m');
   }
 
-  const provider = createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+  const provider = process.env.WATER_MOCK === '1'
+    ? new MockProvider()
+    : createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey! });
   const permissions = new PermissionEngine({ autoAllowLowRisk: true });
   const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: task }] }];
 

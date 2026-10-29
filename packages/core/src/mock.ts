@@ -1,0 +1,30 @@
+/**
+ * MockProvider：离线开发/测试用。不配 key 时 Web/Server 也能完整走通链路。
+ * 行为：第一轮固定请求 glob，第二轮根据工具结果给结论。
+ * 启用方式：WATER_MOCK=1
+ */
+import type { ChatRequest, Provider, StreamEvent } from './types.js';
+
+export class MockProvider implements Provider {
+  readonly protocol = 'openai' as const;
+
+  async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+    const hasToolResult = req.messages.some(m => m.role === 'tool');
+    if (!hasToolResult) {
+      yield { type: 'thinking_delta', text: '（mock）先看看工作区结构…' };
+      yield { type: 'text_delta', text: '我先列一下工作区文件。' };
+      yield {
+        type: 'tool_use',
+        call: { type: 'tool_use', id: `mock-${Date.now()}`, name: 'glob', input: { pattern: '*.{json,md}' } },
+      };
+      yield { type: 'usage', inputTokens: 100, outputTokens: 20 };
+      yield { type: 'done', stopReason: 'tool_use' };
+    } else {
+      const toolMsg = req.messages.findLast(m => m.role === 'tool');
+      const result = toolMsg?.parts[0]?.type === 'tool_result' ? toolMsg.parts[0].content : '';
+      yield { type: 'text_delta', text: `（mock）工具返回：\n${result.slice(0, 500)}\n\n链路正常，配置真实 key 后即可对接 GLM。` };
+      yield { type: 'usage', inputTokens: 200, outputTokens: 40 };
+      yield { type: 'done', stopReason: 'end' };
+    }
+  }
+}

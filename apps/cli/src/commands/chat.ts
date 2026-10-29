@@ -1,6 +1,6 @@
 import readline from 'node:readline';
 import {
-  agentLoop, createProvider, builtinTools, PermissionEngine,
+  agentLoop, createProvider, builtinTools, PermissionEngine, MockProvider,
   type WMessage, type ToolUsePart,
 } from '@water/core';
 import type { WaterConfig } from '../config.js';
@@ -13,12 +13,15 @@ const SYSTEM = [
 ].join('\n');
 
 export async function cmdChat(cfg: WaterConfig): Promise<void> {
-  if (!cfg.apiKey) {
-    console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure.ps1 启动以注入 DPAPI 凭据。`);
+  const mock = process.env.WATER_MOCK === '1';
+  if (!mock && !cfg.apiKey) {
+    console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure.ps1 启动以注入 DPAPI 凭据，或 WATER_MOCK=1 离线体验。`);
     process.exit(1);
   }
 
-  const provider = createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey });
+  const provider = process.env.WATER_MOCK === '1'
+    ? new MockProvider()
+    : createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey! });
   const permissions = new PermissionEngine({ autoAllowLowRisk: true });
   const messages: WMessage[] = [];
 
