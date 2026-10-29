@@ -1,0 +1,45 @@
+name: CI
+
+# CI 三件事：类型检查、离线闭环测试、全量构建。
+# 全部不需要任何 API key —— mock 模式是 CI 的默认形态，真实联调在本地手动做。
+#
+# 触发：main 分支 push（squash 合并后）+ 所有 PR。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ${{ matrix.os }} · node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: Agent Loop 离线闭环测试（mock）
+        run: npx tsx scripts/loop-mock-test.ts
+
+      - name: 全量构建（core / server / cli / web）
+        run: npm run build

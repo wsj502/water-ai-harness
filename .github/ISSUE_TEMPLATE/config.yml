@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题与踩坑排查
+    url: https://github.com/wsj502/water-ai-harness/blob/main/docs/PITFALLS.md
+    about: 先查踩坑总表，多数环境/协议/桌面端问题已有归档结论。
