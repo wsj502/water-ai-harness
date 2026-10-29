@@ -68,6 +68,11 @@ CORS 已由 server 的 `cors()` 中间件放行。
 - `tauri dev` 首次编译需拉取/编译数百 crate（一次性，有缓存）
 - 验证标准：桌面窗口打开 → 侧栏/会话可用 → 发消息走通 SSE（mock 或 GLM）
 
+## 延伸调研
+
+完整版调研报告（选型空间全景、各组件原理、2026 实测数据、风险登记册、参考来源）：
+[docs/research/P4-桌面端技术栈调研.md](../research/P4-桌面端技术栈调研.md)
+
 ## P4 验收清单
 
 - [x] Tauri 2 骨架（tauri.conf.json / lib.rs sidecar 管理）
