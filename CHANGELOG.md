@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### 工程（M4 · 质量基建：vitest + 协议 golden 测试）
+
+- 引入 vitest + @vitest/coverage-v8；`npm test` 一键全量（37 用例 / 5 文件），`npm run test:coverage` 出覆盖率
+- 四套脚本测试迁移为标准用例（loop 闭环 / 上下文与重试 / markdown 与 diff），断言语义零损失；迁移后删除原脚本
+- **新增 Provider 翻译层 golden 测试**：双协议「请求侧翻译 + 响应侧 SSE 解析」帧级锁定——system 抽取/thinking 丢弃/tool_result 角色/tool_calls 聚合/usage 读取/stopReason 映射/缺失 finish_reason 语义修正；变异演示确认能抓人为回归
+- 新增 ProviderRegistry 单测（查找/凭据缺失指引/实例缓存复用/自定义模型优先）
+- 覆盖率现状：context 100%、openai 95%、anthropic 92%（协议层咽喉被锁定）
+- CI 收敛：三条脚本步骤合并为 `npm test`（E2E 独立保留）；CONTRIBUTING 命令同步
+
 ### 新增（M3 · Web 体验：渲染/回放/diff）
 
 - 零依赖 markdown 渲染（`apps/web/src/markdown.ts` + `Md.tsx`）：手写子集解析器（围栏代码/标题/列表/引用/行内 code、粗斜体/链接），**返回 React 元素而非 HTML 字符串——不碰 innerHTML，XSS 免疫是架构保证**；链接协议白名单（http/https），`javascript:` 等降级纯文本

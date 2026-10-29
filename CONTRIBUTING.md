@@ -19,9 +19,9 @@ cd water-ai-harness
 npm ci
 
 # 2. 本地验证（不需要任何 API key）
-npm run typecheck                 # 类型检查
-npx tsx scripts/loop-mock-test.ts # Agent Loop 离线闭环测试
-npm run build                     # 全量构建（core/server/cli/web）
+npm run typecheck                 # 类型检查（core）
+npm test                          # 单元测试（vitest：loop/上下文/markdown/协议翻译 golden/注册表）
+npm run build && npm run test:e2e # 构建 + 离线 E2E（拉起真实 server，27 断言）
 
 # 3. 离线跑起来（mock 模式）
 $env:WATER_MOCK='1'; npm run dev:server   # http://127.0.0.1:3210
@@ -70,7 +70,7 @@ scope 惯例：`core` / `server` / `web` / `cli` / `desktop` / `plugins` / `ci`�
 3. **分支开发**：一个 issue 一个分支，提交可以随意粒度（squash 合并不怕碎）
 4. **自测清单**（PR 前必过）：
    - [ ] `npm run typecheck` 通过
-   - [ ] `npx tsx scripts/loop-mock-test.ts` 通过
+   - [ ] `npm test` 通过（vitest 全量单测，含协议翻译 golden）
    - [ ] 改了内核则补充/更新对应测试
    - [ ] 改了用户可见行为则更新 `docs/articles/` 对应文章与 `CHANGELOG.md` Unreleased 段
 5. **发 PR**：使用 PR 模板，关联 `Closes #<issue>`，等待 CI 全绿
