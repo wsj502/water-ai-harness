@@ -54,6 +54,13 @@ app.get('/api/config', c => c.json({
 
 app.get('/api/sessions', c => c.json({ sessions: store.list() }));
 
+/** 会话历史：Web 切换会话时水合渲染用 */
+app.get('/api/sessions/:id/messages', c => {
+  const s = store.get(c.req.param('id'));
+  if (!s) return c.json({ error: 'session not found' }, 404);
+  return c.json({ title: s.title, messages: s.messages });
+});
+
 app.post('/api/sessions', c => {
   const s = store.create();
   return c.json({ id: s.id }, 201);
