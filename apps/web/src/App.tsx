@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type ModelInfo, type ServerConfig, type SessionMeta } from './api';
+import { api, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent } from './api';
 import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
+import { Md } from './Md';
+import { diffStats, lineDiff } from './diff';
 import { PluginsView } from './views/PluginsView';
 import { SettingsView } from './views/SettingsView';
 import { TasksView } from './views/TasksView';
@@ -57,6 +59,29 @@ export default function App() {
     try {
       const h = await api.history(id);
       setBlocks(hydrateBlocks(h.messages));
+      // M3：busy 会话（如刷新页面时仍在跑）→ 从 events 端点接上本次运行的事件流
+      const list = await api.listSessions().catch(() => []);
+      setSessions(list);
+      const meta = list.find(s => s.id === id);
+      if (meta?.busy) {
+        setBusy(true);
+        void (async () => {
+          try {
+            for (;;) {
+              const { events, busy: still } = await api.eventsSince(id, 0);
+              for (const e of events) {
+                if (e.ev.type === 'usage') setUsage({ input: e.ev.inputTokens, output: e.ev.outputTokens });
+                setBlocks(bs => applyEvent(bs, e.ev));
+              }
+              if (!still && !events.some(e => (e.ev as { type: string }).type === 'finish')) break;
+              if (events.some(e => (e.ev as { type: string }).type === 'finish')) break;
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          } catch { /* 接流失败则保持历史视图 */ }
+          finally { setBusy(false); }
+          api.listSessions().then(setSessions).catch(() => {});
+        })();
+      }
     } catch (e) {
       setBlocks([]);
       setError(String(e));
@@ -78,10 +103,33 @@ export default function App() {
       setBlocks(bs => [...bs, { kind: 'user', text, ts: Date.now() }]);
       const ac = new AbortController();
       abortRef.current = ac;
-      await api.streamMessage(sid, text, ev => {
+
+      const handle = (ev: ServerEvent) => {
         if (ev.type === 'usage') setUsage({ input: ev.inputTokens, output: ev.outputTokens });
         setBlocks(bs => applyEvent(bs, ev));
-      }, ac.signal);
+      };
+
+      // 断线补帧（M3）：流异常断开（非用户中断）→ 轮询 events 端点直到 finish
+      let lastSeq = 0;
+      try {
+        await api.streamMessage(sid, text, (ev, id) => {
+          if (id !== undefined) lastSeq = id;
+          handle(ev);
+        }, ac.signal);
+      } catch (streamErr) {
+        if (ac.signal.aborted) throw streamErr; // 用户主动中断，不补帧
+        const deadline = Date.now() + 10 * 60_000;
+        for (;;) {
+          if (Date.now() > deadline) throw new Error('断线补帧超时（10 分钟）');
+          const { events } = await api.eventsSince(sid, lastSeq).catch(() => ({ events: [], busy: false }));
+          for (const e of events) {
+            if (e.seq > lastSeq) lastSeq = e.seq;
+            handle(e.ev);
+            if (e.ev.type === 'finish') { api.listSessions().then(setSessions).catch(() => {}); return; }
+          }
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
       api.listSessions().then(setSessions).catch(() => {});
     } catch (e) {
       setError(String(e));
@@ -389,7 +437,8 @@ function Block({ block, sessionId, model, streaming }: {
           <div className="body">
             {block.ts && <div className="meta">{model}{block.ts ? ` · ${fmtTime(block.ts)}` : ''}</div>}
             <div className="text">
-              <p style={{ whiteSpace: 'pre-wrap' }}>{block.text}{streaming && <span className="cursor"></span>}</p>
+              <Md text={block.text} />
+              {streaming && <span className="cursor"></span>}
             </div>
           </div>
         </div>
@@ -454,16 +503,23 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
           <button className="btn danger" onClick={() => decide('deny')}>拒绝<span className="key">esc</span></button>
         </div>
       )}
-      {/* edit：真实 diff 渲染（old → 红删 / new → 绿增） */}
+      {/* edit：行级 diff（LCS，- 红 / + 绿 / 上下文灰） */}
       {call.name === 'edit' && typeof call.input.old === 'string' && typeof call.input.new === 'string' && (
-        <div className="codeblock diff" style={{ padding: '8px 0' }}>
-          {String(call.input.old).split('\n').map((l, i) => (
-            <div className="ln del" key={`d${i}`}><span className="no"></span><span className="tx">{l || ' '}</span></div>
-          ))}
-          {String(call.input.new).split('\n').map((l, i) => (
-            <div className="ln add" key={`a${i}`}><span className="no"></span><span className="tx">{l || ' '}</span></div>
-          ))}
-        </div>
+        (() => {
+          const d = lineDiff(String(call.input.old), String(call.input.new));
+          const st = diffStats(d);
+          return (
+            <div className="codeblock diff" style={{ padding: '8px 0' }}>
+              <div className="diff-stat">+{st.add} −{st.del}</div>
+              {d.map((l, i) => (
+                <div className={`ln ${l.type}`} key={i}>
+                  <span className="no"></span>
+                  <span className="tx">{l.text || ' '}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()
       )}
       {/* write：新文件内容预览（前 12 行，带行号） */}
       {call.name === 'write' && typeof call.input.content === 'string' && (

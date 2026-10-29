@@ -164,8 +164,8 @@ export const api = {
       body: JSON.stringify({ callId, decision }),
     }).then(r => json<{ ok: boolean }>(r)),
 
-  /** 发送消息并消费 SSE 事件流 */
-  async streamMessage(sid: string, text: string, onEvent: (ev: ServerEvent) => void, signal?: AbortSignal): Promise<void> {
+  /** 发送消息并消费 SSE 事件流（onEvent 第二参为帧 id = 事件 seq，断线补帧游标） */
+  async streamMessage(sid: string, text: string, onEvent: (ev: ServerEvent, id?: number) => void, signal?: AbortSignal): Promise<void> {
     const resp = await fetch(`${BASE}/api/sessions/${sid}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -188,14 +188,21 @@ export const api = {
       while ((idx = buffer.indexOf('\n\n')) >= 0) {
         const frame = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 2);
+        const idLine = frame.split('\n').find(l => l.startsWith('id:'));
+        const frameId = idLine ? Number(idLine.slice(3).trim()) : undefined;
         const dataLines = frame.split('\n')
           .filter(l => l.startsWith('data:'))
           .map(l => l.slice(5).replace(/^ /, ''));
         if (dataLines.length === 0) continue;
         try {
-          onEvent(JSON.parse(dataLines.join('\n')) as ServerEvent);
+          onEvent(JSON.parse(dataLines.join('\n')) as ServerEvent, Number.isFinite(frameId) ? frameId : undefined);
         } catch { /* 跳过坏帧 */ }
       }
     }
   },
+
+  /** M3：事件回放（断线补帧 / busy 会话接流）。返回事件与 busy 状态 */
+  eventsSince: (sid: string, since: number) =>
+    fetch(`${BASE}/api/sessions/${sid}/events?since=${since}`)
+      .then(r => json<{ events: Array<{ seq: number; ev: ServerEvent }>; busy: boolean }>(r)),
 };

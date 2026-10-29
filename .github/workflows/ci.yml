@@ -44,6 +44,9 @@ jobs:
       - name: 上下文管理 + 容错重试测试（离线）
         run: npx tsx scripts/test-context.ts
 
+      - name: markdown/diff 纯函数测试（含 XSS 契约）
+        run: npx tsx scripts/test-web-pure.ts
+
       - name: 全量构建（core / server / cli / web）
         run: npm run build
 

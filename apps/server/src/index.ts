@@ -289,6 +289,17 @@ app.get('/api/sessions/:id/messages', c => {
   return c.json({ title: s.title, messages: s.messages });
 });
 
+/**
+ * M3 事件回放：返回当前运行中 seq 之后的事件（断线补帧 / 刷新接流）。
+ * 缓冲在每条消息开始时重置，因此 since=0 即「本次运行的完整事件流」。
+ */
+app.get('/api/sessions/:id/events', c => {
+  const s = store.get(c.req.param('id'));
+  if (!s) return c.json({ error: 'session not found' }, 404);
+  const since = Number(c.req.query('since') ?? 0) || 0;
+  return c.json({ events: s.eventsSince(since), busy: s.busy });
+});
+
 app.post('/api/sessions', async c => {
   const body = await c.req.json<{ protocol?: unknown; model?: unknown }>().catch(() => ({}));
   const s = store.create();
@@ -355,9 +366,13 @@ app.post('/api/sessions/:id/messages', async c => {
     s.messages.push({ role: 'assistant', parts: [{ type: 'text', text: builtinReply }] });
     store.save(s);
     return streamSSE(c, async stream => {
-      await stream.writeSSE({ event: 'turn_start', data: JSON.stringify({ type: 'turn_start', turn: 1, model: s.model ?? cfg.model }) });
-      await stream.writeSSE({ event: 'text_delta', data: JSON.stringify({ type: 'text_delta', text: builtinReply }) });
-      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'end' }) });
+      const send = (ev: Record<string, unknown>) => {
+        const seq = s.recordEvent(ev);
+        return stream.writeSSE({ id: String(seq), event: ev.type as string, data: JSON.stringify(ev) });
+      };
+      await send({ type: 'turn_start', turn: 1, model: s.model ?? cfg.model });
+      await send({ type: 'text_delta', text: builtinReply });
+      await send({ type: 'finish', reason: 'end' });
     });
   }
 
@@ -381,6 +396,7 @@ app.post('/api/sessions/:id/messages', async c => {
   s.busy = true;
   s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
   if (s.title === '新会话') s.title = body.text.trim().slice(0, 30);
+  s.resetEventBuffer(); // M3：回放缓冲只覆盖本次运行
 
   // 请求中断 → 中断 Loop + 悬挂审批全拒
   const ac = new AbortController();
@@ -434,7 +450,9 @@ app.post('/api/sessions/:id/messages', async c => {
             : ev.reason === 'error' ? 'error'
             : ev.reason === 'aborted' ? 'aborted' : 'max_turns';
         }
-        await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
+        // M3：帧 id = 事件 seq（断线后可经 /events?since= 补帧）
+        const seq = s.recordEvent(ev);
+        await stream.writeSSE({ id: String(seq), event: ev.type, data: JSON.stringify(ev) });
       }
     } catch (e) {
       task.status = 'error';
