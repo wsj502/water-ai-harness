@@ -78,8 +78,9 @@ CORS 已由 server 的 `cors()` 中间件放行。
 - [x] Tauri 2 骨架（tauri.conf.json / lib.rs sidecar 管理）
 - [x] Web API 基地址桌面适配（`__TAURI__` 检测）
 - [x] 桌面窗口实测（2026-10-29：窗口弹出 + sidecar 拉起 server + 前端加载成功）
-- [ ] Node SEA sidecar（生产硬化，后续迭代）
-- [ ] `tauri build` 出 MSI 安装包（后续迭代）
+- [x] Node SEA sidecar（esbuild bundle → sea blob → postject 注入，`scripts/build-sea.ps1` 一键复现）
+- [x] `tauri build` 出安装包：**MSI 35.7MB / NSIS 24MB**（内嵌 88.5MB sidecar 压缩后）
+      与首次无 sidecar 的 2.88MB 对比，正好量化了「内嵌 Node 运行时」的成本
 
 ### 踩坑记录（首次编译/启动）
 
@@ -89,3 +90,5 @@ CORS 已由 server 的 `cors()` 中间件放行。
 | `frontendDist` 写成相对 desktop 根 | 必须相对 `src-tauri`：`../../web/dist` |
 | sidecar 起来就崩 `EADDRINUSE :3210` | 开发期遗留的测试 server 占端口；固定端口的代价（生产应随机端口+端口文件） |
 | 两个 `tauri dev` 并行 → `app.exe` 文件锁（os error 5） | 单实例开发；或先杀残留进程 |
+| SEA 顶层 await 无法打 CJS | server 入口包 `main()`，TLA 下沉 |
+| postject 报 sentinel 不存在 | **Node 24 换了保险丝字符串**：旧文档 `...b19903b2` → 实际 `...df1996b2`；且部分第三方 node 发行版剥掉了保险丝，必须用官方 node.exe 做基座 |
