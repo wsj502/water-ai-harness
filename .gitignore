@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+out/
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+# Tauri / Rust（P4 阶段）
+apps/desktop/src-tauri/target/
+# 本地密钥，永不入库
+.ai-secrets/

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water — 会话</title>
+<link rel="stylesheet" href="assets/water.css">
+<script>
+/* 主题初始化：localStorage['water-theme'] = light | dark | system（缺省） */
+(function(){try{
+  var t = localStorage.getItem('water-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}catch(e){}})();
+</script>
+</head>
+<body>
+<div class="app">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <span class="crumb">会话 / <b>重构鉴权中间件</b></span>
+    <span class="spacer"></span>
+    <div class="model-pill" tabindex="0" title="切换模型">
+      <span class="dot"></span>
+      <span class="name">glm-4.6</span>
+      <span class="via">via Anthropic Messages</span>
+      <span>▾</span>
+      <div class="model-menu">
+        <div class="group">Anthropic Messages</div>
+        <div class="mi sel">glm-4.6<span class="tag">智谱 · coding plan</span><span class="check">✓</span></div>
+        <div class="mi">glm-4.5-air<span class="tag">智谱 · 轻量快速</span></div>
+        <div class="group">OpenAI 兼容</div>
+        <div class="mi">deepseek-chat<span class="tag">DeepSeek V3</span></div>
+        <div class="mi">deepseek-reasoner<span class="tag">R1 推理</span></div>
+        <div class="mi">qwen3-max<span class="tag">通义</span></div>
+        <div class="mi">qwen2.5-7b<span class="tag">本地 vLLM</span></div>
+      </div>
+    </div>
+    <a class="icon-btn" href="plugins.html" title="插件">⬡</a>
+    <a class="icon-btn" href="settings.html" title="设置">⚙</a>
+  </header>
+
+  <!-- 侧栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div>
+        <div class="name">Water</div>
+        <div class="ver">v0.1.0 · dev</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item active" href="index.html"><span class="ico">💬</span>会话</a>
+      <a class="nav-item" href="tasks.html"><span class="ico">📋</span>任务</a>
+      <a class="nav-item" href="plugins.html"><span class="ico">⬡</span>插件</a>
+      <a class="nav-item" href="workspace.html"><span class="ico">🗂</span>工作区</a>
+    </nav>
+    <div class="section-title">最近会话 <span class="new" title="新建会话">＋</span></div>
+    <div class="sessions">
+      <div class="session active">
+        <div class="t">重构鉴权中间件</div>
+        <div class="m"><span>deepseek-chat</span><span class="tok">12.4k tok</span></div>
+      </div>
+      <div class="session">
+        <div class="t">给 CLI 加 --json 输出</div>
+        <div class="m"><span>deepseek-chat</span><span class="tok">3.1k tok</span></div>
+      </div>
+      <div class="session">
+        <div class="t">SSE 断线重连方案调研</div>
+        <div class="m"><span>qwen3-max</span><span class="tok">28.7k tok</span></div>
+      </div>
+      <div class="session">
+        <div class="t">写 P1 内核的 task breakdown</div>
+        <div class="m"><span>deepseek-chat</span><span class="tok">6.8k tok</span></div>
+      </div>
+    </div>
+    <div class="sidebar-foot">
+      <div class="avatar">我</div>
+      <div class="who">admin@local</div>
+      <span style="color:var(--text-2);font-size:11px">离线模式</span>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <div class="chat-scroll">
+      <div class="chat-col">
+
+        <!-- 用户消息 -->
+        <div class="msg user">
+          <div class="who">我</div>
+          <div class="body">
+            <div class="meta">14:02</div>
+            <div class="text"><p>把 <code>auth.middleware.ts</code> 里的鉴权逻辑抽成独立 provider，JWT 和 API Key 两种校验方式都要保留，别忘了更新调用方。</p></div>
+          </div>
+        </div>
+
+        <!-- 助手：思考 + 工具调用 -->
+        <div class="msg assistant">
+          <div class="who">W</div>
+          <div class="body">
+            <div class="meta">deepseek-chat · 14:02</div>
+
+            <div class="think">
+              <div class="label">💭 思考过程（已折叠 · 3.2s）</div>
+            </div>
+
+            <div class="tool-card">
+              <div class="head">
+                <span class="ico">📖</span>
+                <span class="name">read</span>
+                <span class="arg">src/middleware/auth.middleware.ts</span>
+                <span class="badge ok">完成 12ms</span>
+              </div>
+            </div>
+
+            <div class="tool-card">
+              <div class="head">
+                <span class="ico">🔍</span>
+                <span class="name">grep</span>
+                <span class="arg">pattern="requireAuth" include="*.ts"</span>
+                <span class="badge ok">7 处匹配</span>
+              </div>
+            </div>
+
+            <div class="text">
+              <p>找到了 7 处调用方。计划：新建 <code>src/providers/auth/</code> 目录，拆出 <code>jwt.ts</code> 和 <code>apikey.ts</code> 两个 provider，中间件改为组合调用。先给你看改动 diff：</p>
+            </div>
+
+            <div class="tool-card">
+              <div class="head">
+                <span class="ico">✏️</span>
+                <span class="name">edit</span>
+                <span class="arg">src/middleware/auth.middleware.ts</span>
+                <span class="badge ok">已应用</span>
+              </div>
+              <div class="codeblock diff">
+<div class="ln del"><span class="no">12</span><span class="tx"><span class="tok-c">// 旧逻辑：全部耦合在中间件里</span></span></div>
+<div class="ln del"><span class="no">13</span><span class="tx"><span class="tok-k">const</span> token = req.headers[<span class="tok-s">'authorization'</span>];</span></div>
+<div class="ln add"><span class="no">12</span><span class="tx"><span class="tok-k">import</span> { jwtProvider, apikeyProvider } <span class="tok-k">from</span> <span class="tok-s">'../providers/auth'</span>;</span></div>
+<div class="ln add"><span class="no">13</span><span class="tx"><span class="tok-k">const</span> principal = <span class="tok-k">await</span> <span class="tok-f">authenticate</span>(req, [jwtProvider, apikeyProvider]);</span></div>
+              </div>
+            </div>
+
+            <!-- 审批卡：危险操作需用户确认 -->
+            <div class="approval">
+              <div class="head">
+                <span class="warn">⚠</span>
+                <span>Water 想要执行：<code style="color:var(--amber)">shell</code> — <code>npm run test:auth</code>（验证改动）</span>
+              </div>
+              <div class="actions">
+                <button class="btn primary">允许一次<span class="key">⏎</span></button>
+                <button class="btn">本会话内总是允许<span class="key">a</span></button>
+                <button class="btn danger">拒绝<span class="key">esc</span></button>
+              </div>
+            </div>
+
+            <div class="text">
+              <p>等你批准后我会跑测试套件，通过后更新其余 6 处调用方。</p>
+              <p>预计改动文件：<code>auth.middleware.ts</code>、<code>providers/auth/jwt.ts</code>（新增）、<code>providers/auth/apikey.ts</code>（新增）、6 个调用方。<span class="cursor"></span></p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="composer-box">
+          <textarea placeholder="向 Water 描述任务…（Enter 发送，Shift+Enter 换行，@ 引用文件，/ 斜杠命令）"></textarea>
+          <div class="composer-foot">
+            <span class="chip on">🧠 深度思考</span>
+            <span class="chip">🌐 联网搜索</span>
+            <span class="chip">📎 附件</span>
+            <span class="chip">⬡ 插件: 3</span>
+            <span class="spacer"></span>
+            <span class="hint">deepseek-chat · 上下文 12.4k/128k</span>
+            <button class="send-btn" title="发送">➤</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 状态栏 -->
+  <footer class="statusbar">
+    <span class="item"><span class="ok">●</span> provider: zhipu · anthropic 协议</span>
+    <span class="item">延迟 320ms</span>
+    <span class="item">⬡ 插件 3 个已启用</span>
+    <span class="spacer"></span>
+    <span class="item">workspace: 06-water-ai-harness</span>
+    <span class="item">water v0.1.0</span>
+  </footer>
+</div>
+
+<!-- 原型页间导航（正式版会移除） -->
+<div class="proto-nav">
+  <span class="cap">P0</span>
+  <a href="index.html">💬 会话</a>
+  <a href="tasks.html">📋 任务</a>
+  <a href="plugins.html">⬡ 插件市场</a>
+  <a href="workspace.html">🗂 工作区</a>
+  <a href="settings.html">⚙ 设置</a>
+</div>
+</body>
+</html>

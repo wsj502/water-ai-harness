@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water — 工作区</title>
+<link rel="stylesheet" href="assets/water.css">
+<script>
+(function(){try{
+  var t = localStorage.getItem('water-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}catch(e){}})();
+</script>
+<style>
+  /* 工作区主区需要铺满高度，覆盖 .page 的滚动内边距模式 */
+  .main-fill { grid-area: main; display: flex; min-width: 0; min-height: 0; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="crumb">🗂 <b>工作区</b></span>
+    <span class="spacer"></span>
+    <div class="model-pill" tabindex="0">
+      <span class="dot"></span><span class="name">glm-4.6</span><span>▾</span>
+      <div class="model-menu">
+        <div class="group">Anthropic Messages</div>
+        <div class="mi sel">glm-4.6<span class="tag">智谱 · coding plan</span><span class="check">✓</span></div>
+        <div class="mi">glm-4.5-air<span class="tag">智谱 · 轻量快速</span></div>
+        <div class="group">OpenAI 兼容</div>
+        <div class="mi">deepseek-chat<span class="tag">DeepSeek V3</span></div>
+        <div class="mi">deepseek-reasoner<span class="tag">R1 推理</span></div>
+        <div class="mi">qwen3-max<span class="tag">通义</span></div>
+        <div class="mi">qwen2.5-7b<span class="tag">本地 vLLM</span></div>
+      </div>
+    </div>
+    <a class="icon-btn" href="settings.html" title="设置">⚙</a>
+  </header>
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div><div class="name">Water</div><div class="ver">v0.1.0 · dev</div></div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item" href="index.html"><span class="ico">💬</span>会话</a>
+      <a class="nav-item" href="tasks.html"><span class="ico">📋</span>任务</a>
+      <a class="nav-item" href="plugins.html"><span class="ico">⬡</span>插件</a>
+      <a class="nav-item active" href="workspace.html"><span class="ico">🗂</span>工作区</a>
+    </nav>
+    <div class="section-title">当前工作区</div>
+    <nav class="nav">
+      <a class="nav-item active" href="#"><span class="ico">📁</span>06-water-ai-harness</a>
+      <a class="nav-item" href="#"><span class="ico">📁</span>cs-revolo-base</a>
+      <a class="nav-item" href="#"><span class="ico">📁</span>na-lab</a>
+      <a class="nav-item" href="#"><span class="ico">＋</span>添加工作区…</a>
+    </nav>
+  </aside>
+
+  <main class="main-fill">
+    <div class="ws-wrap">
+      <!-- 文件树 -->
+      <div class="ws-tree">
+        <div class="meta-line">F:\opencode-project\06-water-ai-harness</div>
+        <div class="node"><span class="tw">▾</span>📄 docs</div>
+        <div class="children">
+          <div class="node"><span class="tw">▾</span>📄 articles</div>
+          <div class="children">
+            <div class="node"><span class="tw"></span>00-导读.md</div>
+            <div class="node"><span class="tw"></span>01-界面设计.md</div>
+          </div>
+        </div>
+        <div class="node"><span class="tw">▾</span>🎨 prototype</div>
+        <div class="children">
+          <div class="node"><span class="tw">▸</span>assets</div>
+          <div class="node sel"><span class="tw"></span>index.html</div>
+          <div class="node"><span class="tw"></span>plugins.html</div>
+          <div class="node"><span class="tw"></span>settings.html</div>
+          <div class="node"><span class="tw"></span>tasks.html</div>
+          <div class="node"><span class="tw"></span>workspace.html</div>
+        </div>
+        <div class="node"><span class="tw">▸</span>📦 packages</div>
+        <div class="node"><span class="tw"></span>⚙ package.json</div>
+        <div class="node"><span class="tw"></span>📝 README.md</div>
+        <div class="node"><span class="tw"></span>🔒 .gitignore</div>
+      </div>
+
+      <!-- 文件预览 -->
+      <div class="ws-file">
+        <div class="filebar">
+          <span class="path">prototype / <b>index.html</b></span>
+          <span style="color:var(--text-2)">UTF-8 · HTML · 5.2 KB</span>
+          <span class="spacer"></span>
+          <span class="chip">📌 在会话中引用</span>
+          <span class="chip">✏️ 让 Agent 修改</span>
+        </div>
+        <div class="code-scroll">
+          <div class="codeblock">
+<div class="ln"><span class="no">1</span><span class="tx"><span class="tok-k">&lt;header</span> <span class="tok-n">class</span>=<span class="tok-s">"topbar"</span><span class="tok-k">&gt;</span></span></div>
+<div class="ln"><span class="no">2</span><span class="tx">  <span class="tok-k">&lt;span</span> <span class="tok-n">class</span>=<span class="tok-s">"crumb"</span><span class="tok-k">&gt;</span>会话 / <span class="tok-k">&lt;b&gt;</span>重构鉴权中间件<span class="tok-k">&lt;/b&gt;&lt;/span&gt;</span></span></div>
+<div class="ln"><span class="no">3</span><span class="tx">  <span class="tok-k">&lt;span</span> <span class="tok-n">class</span>=<span class="tok-s">"spacer"</span><span class="tok-k">&gt;&lt;/span&gt;</span></span></div>
+<div class="ln"><span class="no">4</span><span class="tx">  <span class="tok-k">&lt;div</span> <span class="tok-n">class</span>=<span class="tok-s">"model-pill"</span> <span class="tok-n">title</span>=<span class="tok-s">"切换模型"</span><span class="tok-k">&gt;</span></span></div>
+<div class="ln"><span class="no">5</span><span class="tx">    <span class="tok-k">&lt;span</span> <span class="tok-n">class</span>=<span class="tok-s">"dot"</span><span class="tok-k">&gt;&lt;/span&gt;</span></span></div>
+<div class="ln"><span class="no">6</span><span class="tx">    <span class="tok-k">&lt;span</span> <span class="tok-n">class</span>=<span class="tok-s">"name"</span><span class="tok-k">&gt;</span>glm-4.6<span class="tok-k">&lt;/span&gt;</span></span></div>
+<div class="ln"><span class="no">7</span><span class="tx">    <span class="tok-k">&lt;span</span> <span class="tok-n">class</span>=<span class="tok-s">"via"</span><span class="tok-k">&gt;</span>via Anthropic Messages<span class="tok-k">&lt;/span&gt;</span></span></div>
+<div class="ln"><span class="no">8</span><span class="tx">  <span class="tok-k">&lt;/div&gt;</span></span></div>
+<div class="ln"><span class="no">9</span><span class="tx"><span class="tok-k">&lt;/header&gt;</span></span></div>
+<div class="ln"><span class="no">10</span><span class="tx"><span class="tok-c">&lt;!-- 顶栏预留 -webkit-app-region: drag，P4 Tauri 直接生效 --&gt;</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span class="item"><span class="ok">●</span> provider: zhipu · anthropic 协议</span>
+    <span class="spacer"></span>
+    <span class="item">git: (未初始化)</span>
+    <span class="item">workspace: 06-water-ai-harness</span>
+    <span class="item">water v0.1.0</span>
+  </footer>
+</div>
+
+<div class="proto-nav">
+  <span class="cap">P0</span>
+  <a href="index.html">💬 会话</a>
+  <a href="tasks.html">📋 任务</a>
+  <a href="plugins.html">⬡ 插件市场</a>
+  <a href="workspace.html">🗂 工作区</a>
+  <a href="settings.html">⚙ 设置</a>
+</div>
+</body>
+</html>

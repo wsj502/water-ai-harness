@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water — 任务</title>
+<link rel="stylesheet" href="assets/water.css">
+<script>
+(function(){try{
+  var t = localStorage.getItem('water-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}catch(e){}})();
+</script>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="crumb">📋 <b>任务</b></span>
+    <span class="spacer"></span>
+    <div class="model-pill" tabindex="0">
+      <span class="dot"></span><span class="name">glm-4.6</span><span>▾</span>
+      <div class="model-menu">
+        <div class="group">Anthropic Messages</div>
+        <div class="mi sel">glm-4.6<span class="tag">智谱 · coding plan</span><span class="check">✓</span></div>
+        <div class="mi">glm-4.5-air<span class="tag">智谱 · 轻量快速</span></div>
+        <div class="group">OpenAI 兼容</div>
+        <div class="mi">deepseek-chat<span class="tag">DeepSeek V3</span></div>
+        <div class="mi">deepseek-reasoner<span class="tag">R1 推理</span></div>
+        <div class="mi">qwen3-max<span class="tag">通义</span></div>
+        <div class="mi">qwen2.5-7b<span class="tag">本地 vLLM</span></div>
+      </div>
+    </div>
+    <a class="icon-btn" href="settings.html" title="设置">⚙</a>
+  </header>
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div><div class="name">Water</div><div class="ver">v0.1.0 · dev</div></div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item" href="index.html"><span class="ico">💬</span>会话</a>
+      <a class="nav-item active" href="tasks.html"><span class="ico">📋</span>任务</a>
+      <a class="nav-item" href="plugins.html"><span class="ico">⬡</span>插件</a>
+      <a class="nav-item" href="workspace.html"><span class="ico">🗂</span>工作区</a>
+    </nav>
+    <div class="section-title">筛选</div>
+    <nav class="nav">
+      <a class="nav-item active" href="#"><span class="ico">∗</span>全部</a>
+      <a class="nav-item" href="#"><span class="ico">▶</span>运行中</a>
+      <a class="nav-item" href="#"><span class="ico">✓</span>已完成</a>
+      <a class="nav-item" href="#"><span class="ico">✕</span>失败</a>
+    </nav>
+  </aside>
+
+  <main class="page">
+    <h1>任务</h1>
+    <p class="sub">Agent 后台执行的任务单元：一次任务 = 一条完整的 Agent Loop 运行记录，可回放每一步工具调用。</p>
+
+    <div class="task-list">
+
+      <!-- 运行中 -->
+      <div class="task-row open">
+        <div class="line1">
+          <span class="tt">重构鉴权中间件：拆分 provider 并更新调用方</span>
+          <span class="badge run pulse">运行中 · 步骤 4/7</span>
+        </div>
+        <div class="line2">
+          <span>#T-1042</span><span class="m">glm-4.6</span>
+          <span>已运行 2m 41s</span><span>12.4k tok</span><span>会话「重构鉴权中间件」</span>
+        </div>
+        <div class="bar"><i style="width:57%"></i></div>
+        <div class="task-detail">
+          <div class="step"><span class="st-ico">✓</span><span>read auth.middleware.ts <span style="color:var(--text-2)">· 12ms</span></span></div>
+          <div class="step"><span class="st-ico">✓</span><span>grep "requireAuth" → 7 处匹配 <span style="color:var(--text-2)">· 8ms</span></span></div>
+          <div class="step"><span class="st-ico">✓</span><span>edit auth.middleware.ts <span style="color:var(--text-2)">· 已应用</span></span></div>
+          <div class="step"><span class="st-ico">⏳</span><span style="color:var(--amber)">shell npm run test:auth —— 等待用户审批</span></div>
+          <div class="step"><span class="st-ico">·</span><span style="color:var(--text-2)">更新 6 处调用方（待执行）</span></div>
+        </div>
+      </div>
+
+      <!-- 已完成 -->
+      <div class="task-row">
+        <div class="line1">
+          <span class="tt">给 CLI 增加 --json 输出模式</span>
+          <span class="badge ok">已完成</span>
+        </div>
+        <div class="line2">
+          <span>#T-1041</span><span class="m">glm-4.6</span>
+          <span>耗时 4m 02s</span><span>3.1k tok</span><span>改动 3 个文件</span>
+        </div>
+        <div class="bar"><i class="done" style="width:100%"></i></div>
+      </div>
+
+      <div class="task-row">
+        <div class="line1">
+          <span class="tt">SSE 断线重连方案调研与对比报告</span>
+          <span class="badge ok">已完成</span>
+        </div>
+        <div class="line2">
+          <span>#T-1038</span><span class="m">qwen3-max</span>
+          <span>耗时 11m 20s</span><span>28.7k tok</span><span>产出 sse-reconnect.md</span>
+        </div>
+        <div class="bar"><i class="done" style="width:100%"></i></div>
+      </div>
+
+      <!-- 失败 -->
+      <div class="task-row">
+        <div class="line1">
+          <span class="tt">全量测试并修复 flaky 用例</span>
+          <span class="badge deny">失败 · 已中断</span>
+        </div>
+        <div class="line2">
+          <span>#T-1036</span><span class="m">deepseek-chat</span>
+          <span>运行 6m 后中断</span><span>9.9k tok</span>
+          <span style="color:var(--red)">原因：shell 命令连续 2 次被用户拒绝</span>
+        </div>
+        <div class="bar"><i class="fail" style="width:43%"></i></div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span class="item"><span class="ok">●</span> provider: zhipu · anthropic 协议</span>
+    <span class="item">运行中任务 1</span>
+    <span class="spacer"></span>
+    <span class="item">workspace: 06-water-ai-harness</span>
+    <span class="item">water v0.1.0</span>
+  </footer>
+</div>
+
+<div class="proto-nav">
+  <span class="cap">P0</span>
+  <a href="index.html">💬 会话</a>
+  <a href="tasks.html">📋 任务</a>
+  <a href="plugins.html">⬡ 插件市场</a>
+  <a href="workspace.html">🗂 工作区</a>
+  <a href="settings.html">⚙ 设置</a>
+</div>
+</body>
+</html>

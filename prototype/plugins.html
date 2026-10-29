@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water — 插件</title>
+<link rel="stylesheet" href="assets/water.css">
+<script>
+(function(){try{
+  var t = localStorage.getItem('water-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}catch(e){}})();
+</script>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="crumb">⬡ <b>插件市场</b></span>
+    <span class="spacer"></span>
+    <div class="model-pill" tabindex="0">
+      <span class="dot"></span><span class="name">glm-4.6</span><span>▾</span>
+      <div class="model-menu">
+        <div class="group">Anthropic Messages</div>
+        <div class="mi sel">glm-4.6<span class="tag">智谱 · coding plan</span><span class="check">✓</span></div>
+        <div class="mi">glm-4.5-air<span class="tag">智谱 · 轻量快速</span></div>
+        <div class="group">OpenAI 兼容</div>
+        <div class="mi">deepseek-chat<span class="tag">DeepSeek V3</span></div>
+        <div class="mi">deepseek-reasoner<span class="tag">R1 推理</span></div>
+        <div class="mi">qwen3-max<span class="tag">通义</span></div>
+        <div class="mi">qwen2.5-7b<span class="tag">本地 vLLM</span></div>
+      </div>
+    </div>
+    <a class="icon-btn" href="settings.html" title="设置">⚙</a>
+  </header>
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div><div class="name">Water</div><div class="ver">v0.1.0 · dev</div></div>
+    </div>
+    <nav class="nav">
+      <a class="nav-item" href="index.html"><span class="ico">💬</span>会话</a>
+      <a class="nav-item" href="tasks.html"><span class="ico">📋</span>任务</a>
+      <a class="nav-item active" href="plugins.html"><span class="ico">⬡</span>插件</a>
+      <a class="nav-item" href="workspace.html"><span class="ico">🗂</span>工作区</a>
+    </nav>
+    <div class="section-title">插件来源</div>
+    <nav class="nav">
+      <a class="nav-item active" href="#"><span class="ico">🏠</span>本地目录</a>
+      <a class="nav-item" href="#"><span class="ico">📦</span>npm registry</a>
+      <a class="nav-item" href="#"><span class="ico">🔗</span>MCP servers</a>
+    </nav>
+  </aside>
+
+  <main class="page">
+    <h1>插件市场</h1>
+    <p class="sub">插件以 ESM 包形式加载，可注册新工具、斜杠命令与生命周期钩子。声明的权限在安装前可见。</p>
+
+    <div class="plugin-grid">
+
+      <div class="plugin-card">
+        <div class="top">
+          <div class="pico">🌐</div>
+          <div class="pname">web-fetch<span class="at">water-plugin-web-fetch@1.2.0</span></div>
+        </div>
+        <div class="pdesc">抓取网页并转 Markdown 注入上下文，支持 defuddle 正文提取。</div>
+        <div class="pmeta"><span>↓ 12.4k</span><span>官方</span><span>MPL-2.0</span></div>
+        <div class="foot">
+          <div class="perms"><span class="perm">network</span></div>
+          <button class="btn primary">启用</button>
+        </div>
+      </div>
+
+      <div class="plugin-card">
+        <div class="top">
+          <div class="pico">📊</div>
+          <div class="pname">mermaid-preview<span class="at">water-plugin-mermaid@0.9.3</span></div>
+        </div>
+        <div class="pdesc">把模型输出的 mermaid 代码实时渲染成图，支持导出 SVG/PNG。</div>
+        <div class="pmeta"><span>↓ 8.1k</span><span>社区</span><span>MIT</span></div>
+        <div class="foot">
+          <div class="perms"><span class="perm safe">无敏感权限</span></div>
+          <button class="btn">已启用 ✓</button>
+        </div>
+      </div>
+
+      <div class="plugin-card">
+        <div class="top">
+          <div class="pico">🐳</div>
+          <div class="pname">docker-tools<span class="at">water-plugin-docker@0.4.1</span></div>
+        </div>
+        <div class="pdesc">让 Agent 能构建/运行容器，docker compose 一键起服务。</div>
+        <div class="pmeta"><span>↓ 3.2k</span><span>社区</span><span>MIT</span></div>
+        <div class="foot">
+          <div class="perms"><span class="perm">shell</span><span class="perm">fs:write</span></div>
+          <button class="btn primary">启用</button>
+        </div>
+      </div>
+
+      <div class="plugin-card">
+        <div class="top">
+          <div class="pico">🗄️</div>
+          <div class="pname">sqlite-inspector<span class="at">water-plugin-sqlite@1.0.0</span></div>
+        </div>
+        <div class="pdesc">只读查询本地 SQLite 库，schema 自动注入为工具上下文。</div>
+        <div class="pmeta"><span>↓ 1.9k</span><span>社区</span><span>Apache-2.0</span></div>
+        <div class="foot">
+          <div class="perms"><span class="perm">fs:read</span></div>
+          <button class="btn">已启用 ✓</button>
+        </div>
+      </div>
+
+      <div class="plugin-card">
+        <div class="top">
+          <div class="pico">🔌</div>
+          <div class="pname">mcp-bridge<span class="at">water-plugin-mcp@0.2.0</span></div>
+        </div>
+        <div class="pdesc">把任意 MCP server 的工具桥接进 Water，进程外隔离的逃生舱。</div>
+        <div class="pmeta"><span>↓ 950</span><span>官方</span><span>MIT</span></div>
+        <div class="foot">
+          <div class="perms"><span class="perm">process:spawn</span></div>
+          <button class="btn">已启用 ✓</button>
+        </div>
+      </div>
+
+      <div class="plugin-card" style="border-style:dashed;align-items:center;justify-content:center;min-height:170px;color:var(--text-2);cursor:pointer">
+        <div style="font-size:26px">＋</div>
+        <div style="font-size:12.5px">从本地目录 / npm 安装插件</div>
+      </div>
+
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span class="item"><span class="ok">●</span> provider: zhipu · anthropic 协议</span>
+    <span class="spacer"></span>
+    <span class="item">water v0.1.0</span>
+  </footer>
+</div>
+
+<div class="proto-nav">
+  <span class="cap">P0</span>
+  <a href="index.html">💬 会话</a>
+  <a href="tasks.html">📋 任务</a>
+  <a href="plugins.html">⬡ 插件市场</a>
+  <a href="workspace.html">🗂 工作区</a>
+  <a href="settings.html">⚙ 设置</a>
+</div>
+</body>
+</html>

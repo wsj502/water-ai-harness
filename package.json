@@ -1,0 +1,19 @@
+{
+  "name": "water-ai-harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Water —— 一个用于学习研究的 AI Agent Harness：内核 + CLI + Web + 桌面端 + 插件系统",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "echo \"P0 阶段暂无 dev 脚本\"",
+    "build": "echo \"P0 阶段暂无 build 脚本\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

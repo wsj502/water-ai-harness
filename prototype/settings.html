@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Water — 设置</title>
+<link rel="stylesheet" href="assets/water.css">
+<script>
+(function(){try{
+  var t = localStorage.getItem('water-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+}catch(e){}})();
+</script>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <span class="crumb">⚙ <b>设置</b></span>
+    <span class="spacer"></span>
+    <a class="icon-btn" href="index.html" title="返回会话">✕</a>
+  </header>
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div><div class="name">Water</div><div class="ver">v0.1.0 · dev</div></div>
+    </div>
+    <div class="section-title">设置</div>
+    <nav class="nav">
+      <a class="nav-item active" href="#sec-provider"><span class="ico">🤖</span>模型 Provider</a>
+      <a class="nav-item" href="#sec-perm"><span class="ico">🛡</span>权限与审批</a>
+      <a class="nav-item" href="#sec-plugin-dir"><span class="ico">⬡</span>插件目录</a>
+      <a class="nav-item" href="#sec-theme"><span class="ico">🎨</span>外观</a>
+      <a class="nav-item" href="#sec-keys"><span class="ico">⌨</span>快捷键</a>
+      <a class="nav-item" href="#sec-about"><span class="ico">ℹ</span>关于</a>
+    </nav>
+  </aside>
+
+  <main class="page">
+    <h1>模型 Provider</h1>
+    <p class="sub">双协议适配：OpenAI 兼容 + Anthropic Messages。凭据只存环境变量，永不入库。</p>
+
+    <div class="settings">
+      <fieldset class="fieldset" id="sec-provider">
+        <legend>Provider 与协议</legend>
+        <div class="row">
+          <div class="lab">厂商协议<small>决定请求/响应的消息格式</small></div>
+          <div class="ctl">
+            <select class="select">
+              <option>Anthropic Messages（/v1/messages）</option>
+              <option>OpenAI 兼容（/v1/chat/completions）</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="lab">当前模型<small>会话中可随时切换</small></div>
+          <div class="ctl">
+            <select class="select">
+              <option>glm-4.6（智谱 · coding plan）</option>
+              <option>deepseek-chat（DeepSeek V3）</option>
+              <option>deepseek-reasoner（R1 推理）</option>
+              <option>qwen3-max（通义）</option>
+              <option>local-vllm / qwen2.5-7b</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="lab">Base URL<small>智谱 Anthropic 兼容端点</small></div>
+          <div class="ctl"><input class="input" value="https://open.bigmodel.cn/api/anthropic"></div>
+        </div>
+        <div class="row">
+          <div class="lab">API Key<small>从环境变量 ZHIPU_API_KEY 注入</small></div>
+          <div class="ctl">
+            <input class="input" type="password" value="••••••••••••••••" readonly>
+            <div class="env-note">✓ 已从 DPAPI 加密存储解密注入，进程内存中存在，不落盘</div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend>协议适配说明</legend>
+        <div class="row">
+          <div class="ctl" style="font-size:12.5px;color:var(--text-1);line-height:1.7">
+            同一内核，两种线协议：<br>
+            · <b>Anthropic Messages</b>：system 独立字段、tool_use/tool_result 块、<code style="color:var(--accent)">x-api-key</code> 头 —— 智谱 coding plan、Claude 官方<br>
+            · <b>OpenAI 兼容</b>：messages 内嵌 system、tool_calls 字段、<code style="color:var(--accent)">Authorization: Bearer</code> 头 —— DeepSeek、通义、vLLM<br>
+            内核内部统一为 Water 消息模型，由 Provider 适配器双向翻译（详见文章 02）。
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="sec-theme">
+        <legend>外观</legend>
+        <div class="row">
+          <div class="lab">主题<small>跟随系统时监听 prefers-color-scheme</small></div>
+          <div class="ctl">
+            <select class="select" id="theme-select">
+              <option value="system">跟随系统</option>
+              <option value="dark">深色</option>
+              <option value="light">浅色</option>
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="sec-perm">
+        <legend>Agent 行为 · 权限与审批</legend>
+        <div class="row">
+          <div class="lab">自动审批低风险工具<small>read / grep / glob 直接放行</small></div>
+          <label class="switch"><input type="checkbox" checked><span class="sl"></span></label>
+        </div>
+        <div class="row">
+          <div class="lab">shell 执行前必须确认<small>建议保持开启</small></div>
+          <label class="switch"><input type="checkbox" checked><span class="sl"></span></label>
+        </div>
+        <div class="row">
+          <div class="lab">上下文超限自动摘要<small>超过 90% 窗口时压缩历史</small></div>
+          <label class="switch"><input type="checkbox" checked><span class="sl"></span></label>
+        </div>
+        <div class="row">
+          <div class="lab">流式输出<small>SSE 逐 token 渲染</small></div>
+          <label class="switch"><input type="checkbox" checked><span class="sl"></span></label>
+        </div>
+        <div class="row" style="display:block">
+          <div class="lab" style="margin-bottom:8px">审批规则表<small>从上到下匹配，命中即生效（P1 内核权限模块直接消费这张表）</small></div>
+          <div class="rule-table">
+            <div class="rule-row rule-head">
+              <span>工具</span><span>风险级</span><span>默认策略</span><span>会话覆盖</span>
+            </div>
+            <div class="rule-row"><span><code>read / grep / glob</code></span><span class="badge ok">低</span><span>自动放行</span><span class="txtdim">—</span></div>
+            <div class="rule-row"><span><code>edit / write</code></span><span class="badge run">中</span><span>每次询问</span><span class="txtdim">—</span></div>
+            <div class="rule-row"><span><code>shell</code></span><span class="badge deny">高</span><span>每次询问</span><span>本会话已允许 <code>npm run test:*</code></span></div>
+            <div class="rule-row"><span><code>web-fetch（插件）</code></span><span class="badge run">中</span><span>每次询问</span><span class="txtdim">—</span></div>
+            <div class="rule-row"><span><code>process:spawn（插件）</code></span><span class="badge deny">高</span><span>每次询问 + 二次确认</span><span class="txtdim">—</span></div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="sec-plugin-dir">
+        <legend>插件目录</legend>
+        <div class="row">
+          <div class="lab">本地目录<small>开发中的插件直接放这里</small></div>
+          <div class="ctl"><input class="input" value="~/.water/plugins"></div>
+        </div>
+        <div class="row">
+          <div class="lab">npm 前缀<small>安装时按此前缀搜索包</small></div>
+          <div class="ctl"><input class="input" value="water-plugin-*"></div>
+        </div>
+        <div class="row">
+          <div class="lab">MCP 配置文件<small>进程外插件的逃生舱</small></div>
+          <div class="ctl"><input class="input" value="~/.water/mcp.json"></div>
+        </div>
+        <div class="row">
+          <div class="lab">自动更新插件<small>仅补丁版本，major 需手动确认</small></div>
+          <label class="switch"><input type="checkbox"><span class="sl"></span></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="sec-keys">
+        <legend>快捷键</legend>
+        <div class="row"><div class="lab">发送消息</div><div class="ctl"><span class="kbd">Enter</span> <span class="txtdim">换行</span> <span class="kbd">Shift</span>+<span class="kbd">Enter</span></div></div>
+        <div class="row"><div class="lab">新建会话</div><div class="ctl"><span class="kbd">Ctrl</span>+<span class="kbd">N</span></div></div>
+        <div class="row"><div class="lab">审批：允许一次 / 总是允许 / 拒绝</div><div class="ctl"><span class="kbd">Enter</span> / <span class="kbd">A</span> / <span class="kbd">Esc</span></div></div>
+        <div class="row"><div class="lab">中断当前生成</div><div class="ctl"><span class="kbd">Ctrl</span>+<span class="kbd">C</span><span class="txtdim">（CLI）·</span> <span class="kbd">Esc</span><span class="txtdim">（Web）</span></div></div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="sec-about">
+        <legend>关于</legend>
+        <div class="row"><div class="lab">版本</div><div class="ctl">water v0.1.0-dev <span class="txtdim">· channel: dev</span></div></div>
+        <div class="row"><div class="lab">协议自检<small>P1 后变为真实探测</small></div><div class="ctl"><span class="env-note" style="display:inline-block;margin-top:0">✓ anthropic → open.bigmodel.cn 连通 · 234ms</span></div></div>
+        <div class="row"><div class="lab">诊断日志</div><div class="ctl"><span class="txtdim">~/.water/logs/water-2026-10-29.log</span></div></div>
+        <div class="row"><div class="lab">许可</div><div class="ctl">MIT · 仅供个人学习研究</div></div>
+      </fieldset>
+    </div>
+  </main>
+
+  <footer class="statusbar">
+    <span class="item"><span class="ok">●</span> provider: zhipu · anthropic 协议</span>
+    <span class="spacer"></span>
+    <span class="item">water v0.1.0</span>
+  </footer>
+</div>
+
+<script>
+/* 原型演示：主题切换真实生效（写入 localStorage，三页共享） */
+(function () {
+  var sel = document.getElementById('theme-select');
+  try { sel.value = localStorage.getItem('water-theme') || 'system'; } catch (e) {}
+  sel.addEventListener('change', function () {
+    try {
+      if (sel.value === 'system') {
+        localStorage.removeItem('water-theme');
+        delete document.documentElement.dataset.theme;
+      } else {
+        localStorage.setItem('water-theme', sel.value);
+        document.documentElement.dataset.theme = sel.value;
+      }
+    } catch (e) {}
+  });
+})();
+</script>
+<div class="proto-nav">
+  <span class="cap">P0</span>
+  <a href="index.html">💬 会话</a>
+  <a href="tasks.html">📋 任务</a>
+  <a href="plugins.html">⬡ 插件市场</a>
+  <a href="workspace.html">🗂 工作区</a>
+  <a href="settings.html">⚙ 设置</a>
+</div>
+</body>
+</html>
