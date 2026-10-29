@@ -1,0 +1,7 @@
+{
+  "name": "water-plugin-web-fetch",
+  "version": "0.1.0",
+  "description": "抓取网页并提取正文文本（声明 network 权限，工具风险级会被提升为 medium）",
+  "main": "index.js",
+  "permissions": ["network"]
+}

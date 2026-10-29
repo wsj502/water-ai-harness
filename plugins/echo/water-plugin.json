@@ -1,0 +1,7 @@
+{
+  "name": "water-plugin-echo",
+  "version": "0.1.0",
+  "description": "教学示例：回声工具 + 斜杠命令 + 工具调用日志钩子",
+  "main": "index.js",
+  "permissions": []
+}

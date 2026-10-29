@@ -17,8 +17,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import {
-  agentLoop, builtinTools, createProvider, MockProvider,
-  resolveConfig, type Provider, type ToolUsePart,
+  agentLoop, builtinTools, createProvider, loadPlugins, MockProvider,
+  resolveConfig, type PluginRegistry, type Provider, type ToolUsePart,
 } from '@water/core';
 import { SessionStore, type ApprovalDecision } from './session.js';
 
@@ -42,6 +42,10 @@ const SYSTEM = [
 const store = new SessionStore();
 const app = new Hono();
 
+// ---- 插件加载（启动时一次；开发期重启即重载） ----
+const plugins: PluginRegistry = await loadPlugins(cfg.cwd);
+const allTools = [...builtinTools, ...plugins.tools];
+
 app.use('/api/*', cors());
 
 app.get('/api/config', c => c.json({
@@ -53,6 +57,20 @@ app.get('/api/config', c => c.json({
 }));
 
 app.get('/api/sessions', c => c.json({ sessions: store.list() }));
+
+/** 插件清单：名称/版本/权限/注册物/加载错误 */
+app.get('/api/plugins', c => c.json({
+  plugins: plugins.plugins.map(p => ({
+    name: p.manifest.name,
+    version: p.manifest.version,
+    description: p.manifest.description ?? '',
+    permissions: p.manifest.permissions ?? [],
+    tools: p.tools.map(t => t.spec.name),
+    commands: p.commands.map(cd => `/${cd.name}`),
+    dir: p.dir,
+    error: p.error ?? null,
+  })),
+}));
 
 /** 会话历史：Web 切换会话时水合渲染用 */
 app.get('/api/sessions/:id/messages', c => {
@@ -92,9 +110,18 @@ app.post('/api/sessions/:id/messages', async c => {
   const body = await c.req.json<{ text?: string }>().catch(() => null);
   if (!body?.text?.trim()) return c.json({ error: '需要合法 JSON 且 text 不能为空' }, 400);
 
+  let text = body.text.trim();
+
+  // 斜杠命令展开：/review src/x.ts → 模板替换 $ARGUMENTS
+  const cmdMatch = text.match(/^\/(\S+)\s*([\s\S]*)$/);
+  if (cmdMatch) {
+    const cmd = plugins.commands.find(cd => cd.name === cmdMatch[1]);
+    if (cmd) text = cmd.template.replace(/\$ARGUMENTS/g, cmdMatch[2] ?? '');
+  }
+
   s.busy = true;
-  s.messages.push({ role: 'user', parts: [{ type: 'text', text: body.text }] });
-  if (s.title === '新会话') s.title = body.text.slice(0, 30);
+  s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
+  if (s.title === '新会话') s.title = body.text.trim().slice(0, 30);
 
   // 请求中断 → 中断 Loop + 悬挂审批全拒
   const ac = new AbortController();
@@ -115,7 +142,7 @@ app.post('/api/sessions/:id/messages', async c => {
     try {
       for await (const ev of agentLoop({
         provider, model: cfg.model, system: SYSTEM, messages: s.messages,
-        tools: builtinTools, permissions: s.permissions,
+        tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
         toolCtx: { cwd: cfg.cwd }, approve,
         maxTurns: 20, signal: ac.signal,
       })) {
