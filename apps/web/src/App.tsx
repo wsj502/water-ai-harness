@@ -3,8 +3,10 @@ import { api, type ServerConfig, type SessionMeta } from './api';
 import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
 import { PluginsView } from './views/PluginsView';
 import { SettingsView } from './views/SettingsView';
+import { TasksView } from './views/TasksView';
+import { WorkspaceView } from './views/WorkspaceView';
 
-type View = 'chat' | 'plugins' | 'settings';
+type View = 'chat' | 'tasks' | 'plugins' | 'workspace' | 'settings';
 
 export default function App() {
   const [view, setView] = useState<View>('chat');
@@ -95,6 +97,8 @@ export default function App() {
       </main>
       )}
       {view === 'plugins' && <PluginsView />}
+      {view === 'tasks' && <TasksView />}
+      {view === 'workspace' && <WorkspaceView />}
       {view === 'settings' && <SettingsView />}
       <footer className="statusbar">
         <span className="item"><span className="ok">●</span> provider: {config?.protocol ?? '…'}</span>
@@ -124,10 +128,10 @@ function Topbar({ config }: { config: ServerConfig | null }) {
 function Sidebar({ sessions, activeId, view, onOpen, onNew, onNav }: {
   sessions: SessionMeta[];
   activeId: string | null;
-  view: 'chat' | 'plugins' | 'settings';
+  view: 'chat' | 'tasks' | 'plugins' | 'workspace' | 'settings';
   onOpen: (id: string) => void;
   onNew: () => void;
-  onNav: (v: 'chat' | 'plugins' | 'settings') => void;
+  onNav: (v: 'chat' | 'tasks' | 'plugins' | 'workspace' | 'settings') => void;
 }) {
   return (
     <aside className="sidebar">
@@ -140,7 +144,9 @@ function Sidebar({ sessions, activeId, view, onOpen, onNew, onNav }: {
       </div>
       <nav className="nav">
         <a className={`nav-item${view === 'chat' ? ' active' : ''}`} onClick={() => onNav('chat')}><span className="ico">💬</span>会话</a>
+        <a className={`nav-item${view === 'tasks' ? ' active' : ''}`} onClick={() => onNav('tasks')}><span className="ico">📋</span>任务</a>
         <a className={`nav-item${view === 'plugins' ? ' active' : ''}`} onClick={() => onNav('plugins')}><span className="ico">⬡</span>插件</a>
+        <a className={`nav-item${view === 'workspace' ? ' active' : ''}`} onClick={() => onNav('workspace')}><span className="ico">🗂</span>工作区</a>
         <a className={`nav-item${view === 'settings' ? ' active' : ''}`} onClick={() => onNav('settings')}><span className="ico">⚙</span>设置</a>
       </nav>
       <div className="section-title">

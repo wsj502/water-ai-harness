@@ -55,6 +55,32 @@ export interface PluginInfo {
   error: string | null;
 }
 
+export interface TaskStep {
+  tool: string;
+  summary: string;
+  ok: boolean | null;
+  durationMs: number;
+}
+
+export interface TaskRecord {
+  id: string;
+  sessionId: string;
+  title: string;
+  startedAt: number;
+  finishedAt: number;
+  status: 'done' | 'error' | 'aborted' | 'max_turns';
+  steps: TaskStep[];
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface FileNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  children?: FileNode[];
+}
+
 export const api = {
   config: () => fetch(`${BASE}/api/config`).then(r => json<ServerConfig>(r)),
 
@@ -63,6 +89,16 @@ export const api = {
 
   listPlugins: () =>
     fetch(`${BASE}/api/plugins`).then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
+
+  listTasks: () =>
+    fetch(`${BASE}/api/tasks`).then(r => json<{ tasks: TaskRecord[] }>(r)).then(j => j.tasks),
+
+  fileTree: () =>
+    fetch(`${BASE}/api/files/tree`).then(r => json<{ root: string; tree: FileNode[] }>(r)),
+
+  fileContent: (path: string) =>
+    fetch(`${BASE}/api/files/content?path=${encodeURIComponent(path)}`)
+      .then(r => json<{ path: string; size: number; content: string }>(r)),
 
   createSession: () =>
     fetch(`${BASE}/api/sessions`, { method: 'POST' }).then(r => json<{ id: string }>(r)).then(j => j.id),
