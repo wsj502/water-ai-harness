@@ -47,9 +47,9 @@ const SYSTEM = [
 const store = new SessionStore(new SessionPersistence(cfg.cwd));
 const app = new Hono();
 
-// ---- 插件加载（启动时一次；开发期重启即重载） ----
-const plugins: PluginRegistry = await loadPlugins(cfg.cwd);
-const allTools = [...builtinTools, ...plugins.tools];
+// 插件注册表在 main() 里异步加载（避免顶层 await，兼容 CJS/SEA 打包）
+let plugins: PluginRegistry = { plugins: [], tools: [], commands: [], hooks: [] };
+let allTools = [...builtinTools];
 
 app.use('/api/*', cors());
 
@@ -267,7 +267,18 @@ if (existsSync(webDist)) {
   app.get('*', serveStatic({ path: path.join(webDist, 'index.html') }));
 }
 
-serve({ fetch: app.fetch, port }, info => {
-  console.log(`water server · http://127.0.0.1:${info.port} · ${mock ? 'MOCK 模式' : `${cfg.model} via ${cfg.protocol}`} · 工作区 ${cfg.cwd}`);
-  if (existsSync(webDist)) console.log(`web 静态托管: ${webDist}`);
+async function main(): Promise<void> {
+  // 插件加载（启动时一次；开发期重启即重载）
+  plugins = await loadPlugins(cfg.cwd);
+  allTools = [...builtinTools, ...plugins.tools];
+
+  serve({ fetch: app.fetch, port }, info => {
+    console.log(`water server · http://127.0.0.1:${info.port} · ${mock ? 'MOCK 模式' : `${cfg.model} via ${cfg.protocol}`} · 工作区 ${cfg.cwd}`);
+    if (existsSync(webDist)) console.log(`web 静态托管: ${webDist}`);
+  });
+}
+
+main().catch(e => {
+  console.error('server 启动失败:', e);
+  process.exit(1);
 });

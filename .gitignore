@@ -9,6 +9,9 @@ out/
 Thumbs.db
 # Tauri / Rust（P4 阶段）
 apps/desktop/src-tauri/target/
+# SEA / sidecar 构建产物（可用 scripts/build-sea.ps1 重新生成）
+apps/server/dist-sea/
+apps/desktop/src-tauri/binaries/
 # 本地密钥，永不入库
 .ai-secrets/
 # docker compose 的 Agent 工作区挂载点
