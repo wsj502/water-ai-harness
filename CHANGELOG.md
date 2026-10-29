@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+### 文档（M5 · 文章深化第一批）
+
+- 新增《12-开源工程实践实录》：M0-M4 全部 GitHub 工作流归档——issue 先行/PR 模板/CI 抓 tsbuildinfo 真 bug 复盘/分支保护付费墙（403 实录）/tag 与 Release 语义/备忘 issue 分类学/变异验证/翻车实录（PAT scope、PS `--` 解析、coverage 误入库）/可复现命令速查
+- 重写《02-Agent Loop 解剖》：补智谱真实 SSE 帧 dump（含 usage 双位置兼容）、失败模式分析表（中断半截消息 bug 等 5 项）、与 OpenCode Loop 的逐维对照、M2 压缩时序
+- 深化《03-SSE 流式协议设计》：三方案选型表（含 EventSource 只支持 GET 的排除理由）、帧 id/seq 协议演进、断线状态机（用户中断≠网络断开）、刷新接流路径、v0.2 端点速查
+- 导读索引补全 09-12
+
 ### 工程（M4 · 质量基建：vitest + 协议 golden 测试）
 
 - 引入 vitest + @vitest/coverage-v8；`npm test` 一键全量（37 用例 / 5 文件），`npm run test:coverage` 出覆盖率
