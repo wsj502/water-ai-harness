@@ -1,0 +1,25 @@
+# Water 一体化部署：server(API+SSE) + Web(静态托管) + 插件
+# 用法：
+#   cp .env.example .env   # 填入 ZHIPU_API_KEY（.env 已被 .gitignore 排除）
+#   docker compose up -d --build
+#   open http://127.0.0.1:3210
+services:
+  water:
+    build: .
+    image: water:0.1.0
+    container_name: water
+    ports:
+      - "3210:3210"
+    environment:
+      # 凭据只走环境变量；生产建议换 docker secret 或 vault 注入
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:?请在 .env 里配置 ZHIPU_API_KEY}
+      WATER_PROTOCOL: ${WATER_PROTOCOL:-anthropic}
+      WATER_BASE_URL: ${WATER_BASE_URL:-https://open.bigmodel.cn/api/anthropic}
+      WATER_MODEL: ${WATER_MODEL:-glm-4.6}
+    volumes:
+      # Agent 的工作区：把宿主机项目目录挂进去
+      - ${WATER_WORKSPACE:-./workspace}:/workspace
+      # 插件配置（mcp.json 等），容器内只读
+      - ./.water:/workspace/.water:ro
+    restart: unless-stopped
+    read_only: false # /workspace 需要写权限（Agent 改代码），镜像层本身无可写需求

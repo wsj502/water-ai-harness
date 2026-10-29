@@ -1,0 +1,15 @@
+# 构建上下文瘦身：镜像只需要 manifest + src + 插件
+node_modules
+**/node_modules
+**/dist
+.git
+.gitignore
+*.log
+.water
+prototype
+docs
+scripts
+tools
+.ai-secrets
+Dockerfile
+docker-compose.yml

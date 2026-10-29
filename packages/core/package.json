@@ -11,7 +11,8 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepublishOnly": "npm run build"
   },
   "license": "MIT"
 }

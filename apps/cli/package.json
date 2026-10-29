@@ -11,7 +11,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@water/core": "*",
