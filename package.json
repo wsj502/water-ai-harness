@@ -13,6 +13,8 @@
     "dev:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& tsx watch apps/server/src/index.ts",
     "start:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& node apps/server/dist/index.js",
     "typecheck": "tsc --noEmit -p packages/core",
+    "test:loop": "tsx scripts/loop-mock-test.ts",
+    "test:e2e": "tsx scripts/e2e-model-switch.ts",
     "build": "tsc -b packages/core apps/server apps/cli && npm run build -w apps/web"
   },
   "engines": {

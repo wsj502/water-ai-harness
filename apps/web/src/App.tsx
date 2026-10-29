@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type ServerConfig, type SessionMeta } from './api';
+import { api, type ModelInfo, type ServerConfig, type SessionMeta } from './api';
 import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
 import { PluginsView } from './views/PluginsView';
 import { SettingsView } from './views/SettingsView';
@@ -20,6 +20,8 @@ function fmtTime(ts: number): string {
 export default function App() {
   const [view, setView] = useState<View>('chat');
   const [config, setConfig] = useState<ServerConfig | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [mockMode, setMockMode] = useState(false);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<UiBlock[]>([]);
@@ -30,11 +32,14 @@ export default function App() {
   const [pluginCount, setPluginCount] = useState(0);
   /** 工作区「在会话中引用」注入 composer 的草稿（nonce 驱动 effect） */
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  /** 未激活会话时选的模型：作为下个新会话的初始配置（M1） */
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.config().then(setConfig).catch(e => setError(String(e)));
+    api.models().then(m => { setModels(m.models); setMockMode(m.mock); }).catch(() => {});
     api.listSessions().then(setSessions).catch(() => {});
     api.listPlugins().then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
   }, []);
@@ -48,6 +53,7 @@ export default function App() {
     setActiveId(id);
     setError(null);
     setUsage(null);
+    setPendingModel(null);
     try {
       const h = await api.history(id);
       setBlocks(hydrateBlocks(h.messages));
@@ -64,8 +70,10 @@ export default function App() {
     try {
       let sid = activeId;
       if (!sid) {
-        sid = await api.createSession();
+        const created = await api.createSession(pendingModel ? { model: pendingModel } : undefined);
+        sid = created.id;
         setActiveId(sid);
+        setPendingModel(null);
       }
       setBlocks(bs => [...bs, { kind: 'user', text, ts: Date.now() }]);
       const ac = new AbortController();
@@ -81,7 +89,7 @@ export default function App() {
       setBusy(false);
       abortRef.current = null;
     }
-  }, [activeId, busy]);
+  }, [activeId, busy, pendingModel]);
 
   const newSession = useCallback(() => {
     abortRef.current?.abort();
@@ -89,6 +97,19 @@ export default function App() {
     setBlocks([]);
     setUsage(null);
   }, []);
+
+  /** 选中模型：有激活会话 → PATCH 会话配置；无 → 记为下个新会话的初始配置（M1） */
+  const pickModel = useCallback(async (modelId: string | null) => {
+    if (activeId) {
+      try {
+        await api.setSessionConfig(activeId, modelId ? { model: modelId } : { reset: true });
+        const list = await api.listSessions();
+        setSessions(list);
+      } catch (e) { setError(String(e)); }
+    } else {
+      setPendingModel(modelId);
+    }
+  }, [activeId]);
 
   /** 工作区文件引用：注入 composer 并切回会话页 */
   const injectRef = useCallback((text: string) => {
@@ -126,10 +147,18 @@ export default function App() {
   }, [waitingCallId, activeId, busy]);
 
   const activeTitle = sessions.find(s => s.id === activeId)?.title ?? null;
+  const activeMeta = sessions.find(s => s.id === activeId) ?? null;
+  /** 生效模型/协议：会话覆盖 > 未建会话时的预选 > 服务端默认 */
+  const effModel = activeMeta?.model ?? pendingModel ?? config?.model ?? '';
+  const effProtocol = activeMeta?.protocol ?? (pendingModel ? models.find(m => m.id === pendingModel)?.protocol : undefined) ?? config?.protocol ?? '';
+  const sessionOverridden = activeMeta != null && (activeMeta.model != null || activeMeta.protocol != null);
 
   return (
     <div className="app">
-      <Topbar config={config} sessionTitle={view === 'chat' ? activeTitle : null} view={view} />
+      <Topbar config={config} sessionTitle={view === 'chat' ? activeTitle : null} view={view}
+        models={models} mockMode={mockMode}
+        current={{ model: effModel, protocol: effProtocol }}
+        showDefault={sessionOverridden} disabled={busy} onPick={pickModel} />
       <Sidebar sessions={sessions} activeId={activeId} view={view} config={config}
         onOpen={openSession} onNew={newSession} onNav={setView} />
       {view === 'chat' && (
@@ -144,14 +173,14 @@ export default function App() {
               </div>
             )}
             {blocks.map((b, i) => (
-              <Block key={i} block={b} sessionId={activeId} model={config?.model ?? ''}
+              <Block key={i} block={b} sessionId={activeId} model={effModel}
                 streaming={busy && i === blocks.length - 1} />
             ))}
             {error && <div className="approval"><div className="head"><span className="warn">✕</span><span>{error}</span></div></div>}
             {busy && <div style={{ color: 'var(--text-2)', fontSize: 12 }}>生成中…（Esc 中断）</div>}
           </div>
         </div>
-        <Composer onSend={send} busy={busy} config={config} usage={usage}
+        <Composer onSend={send} busy={busy} config={config} usage={usage} model={effModel}
           pluginCount={pluginCount} onNavPlugins={() => setView('plugins')} prefill={prefill} />
       </main>
       )}
@@ -175,21 +204,97 @@ const VIEW_CRUMB: Record<View, string> = {
   chat: '会话', tasks: '任务', plugins: '插件', workspace: '工作区', settings: '设置',
 };
 
-function Topbar({ config, sessionTitle, view }: {
+function Topbar({ config, sessionTitle, view, models, mockMode, current, showDefault, disabled, onPick }: {
   config: ServerConfig | null;
   sessionTitle: string | null;
   view: View;
+  models: ModelInfo[];
+  mockMode: boolean;
+  current: { model: string; protocol: string };
+  showDefault: boolean;
+  disabled: boolean;
+  onPick: (modelId: string | null) => void;
 }) {
   return (
     <header className="topbar">
       <span className="crumb">{VIEW_CRUMB[view]}{sessionTitle ? <> / <b>{sessionTitle}</b></> : null}</span>
       <span className="spacer"></span>
-      <div className="model-pill" title="模型由服务端配置（flag > env > config.json）决定">
-        <span className="dot"></span>
-        <span className="name">{config?.model ?? '…'}</span>
-        <span className="via">via {config?.protocol ?? ''}</span>
-      </div>
+      <ModelPill models={models} mockMode={mockMode} current={current}
+        showDefault={showDefault} disabled={disabled} onPick={onPick} />
     </header>
+  );
+}
+
+const PROTOCOL_LABEL: Record<'anthropic' | 'openai', string> = {
+  anthropic: 'Anthropic Messages',
+  openai: 'OpenAI 兼容',
+};
+
+function fmtCtx(n?: number): string {
+  return n == null ? '' : n >= 1000 ? `${Math.round(n / 1000)}k ctx` : `${n} ctx`;
+}
+
+/** 模型切换器（M1）：P0 原生的纯 CSS 下拉（:focus-within），接 /api/models 真数据 */
+function ModelPill({ models, mockMode, current, showDefault, disabled, onPick }: {
+  models: ModelInfo[];
+  mockMode: boolean;
+  current: { model: string; protocol: string };
+  showDefault: boolean;
+  disabled: boolean;
+  onPick: (modelId: string | null) => void;
+}) {
+  const groups: Array<{ protocol: string; label: string; items: ModelInfo[] }> = [];
+  for (const p of ['anthropic', 'openai'] as const) {
+    const items = models.filter(m => m.protocol === p);
+    if (items.length) groups.push({ protocol: p, label: PROTOCOL_LABEL[p], items });
+  }
+  const pick = (id: string | null) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onPick(id);
+    // 释放焦点收起菜单（纯 CSS :focus-within 方案的收起手段）
+    const pill = (e.currentTarget as HTMLElement).closest('.model-pill');
+    if (pill instanceof HTMLElement) pill.blur();
+  };
+  return (
+    <div className="model-pill" tabIndex={disabled ? -1 : 0}
+      title={disabled ? '生成中不可切换' : mockMode ? '离线模式：切换仅验证契约，响应恒为 mock' : '切换当前会话的模型（运行时生效）'}>
+      <span className="dot"></span>
+      <span className="name">{current.model || '…'}</span>
+      <span className="via">via {mockMode ? 'mock' : (current.protocol || '…')}</span>
+      <span>▾</span>
+      <div className="model-menu" onClick={e => e.stopPropagation()}>
+        {showDefault && (
+          <>
+            <div className="group">当前会话</div>
+            <div className="mi" onClick={pick(null)}>
+              ↺ 服务端默认<span className="tag">清除本会话覆盖</span>
+            </div>
+          </>
+        )}
+        {groups.map(g => (
+          <div key={g.protocol}>
+            <div className="group">{g.label}</div>
+            {g.items.map(m => {
+              const sel = m.id === current.model;
+              const blocked = !mockMode && m.hasKey === false;
+              return (
+                <div key={m.id} className={`mi${sel ? ' sel' : ''}`}
+                  style={blocked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                  title={blocked ? `缺少凭据 ${m.apiKeyEnv ?? ''}：请在服务端配置后再选` : m.vendor}
+                  onClick={blocked ? undefined : pick(m.id)}>
+                  {m.id}{m.thinking ? ' 💭' : ''}
+                  <span className="tag">
+                    {[m.label, fmtCtx(m.contextWindow), blocked ? '缺 key' : ''].filter(Boolean).join(' · ')}
+                  </span>
+                  {sel && <span className="check">✓</span>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        {models.length === 0 && <div className="group">模型清单加载中…</div>}
+      </div>
+    </div>
   );
 }
 
@@ -378,11 +483,12 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
   );
 }
 
-function Composer({ onSend, busy, config, usage, pluginCount, onNavPlugins, prefill }: {
+function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugins, prefill }: {
   onSend: (text: string) => void;
   busy: boolean;
   config: ServerConfig | null;
   usage: { input: number; output: number } | null;
+  model: string;
   pluginCount: number;
   onNavPlugins: () => void;
   prefill: { text: string; nonce: number } | null;
@@ -425,7 +531,7 @@ function Composer({ onSend, busy, config, usage, pluginCount, onNavPlugins, pref
             )}
             <span className="spacer"></span>
             <span className="hint">
-              {config?.model ?? ''}
+              {model}
               {usage ? ` · 上下文 ${fmtTok(usage.input)} tok` : ''}
             </span>
             <button className="send-btn" onClick={submit} disabled={busy} title="发送">➤</button>

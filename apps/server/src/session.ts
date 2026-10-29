@@ -10,6 +10,7 @@ import { PermissionEngine, type ToolUsePart, type WMessage } from '@water/core';
 import type { TaskRow } from './persistence.js';
 
 export type ApprovalDecision = 'once' | 'session' | 'deny';
+export type SessionProtocol = 'anthropic' | 'openai';
 
 /** 任务 = 一次消息处理（Agent Loop 运行）的记录，供任务页展示 */
 export interface TaskStep {
@@ -43,6 +44,9 @@ export class Session {
   title = '新会话';
   messages: WMessage[] = [];
   permissions = new PermissionEngine({ autoAllowLowRisk: true });
+  /** M1：会话级模型覆盖（null = 跟随服务端默认） */
+  protocol: SessionProtocol | null = null;
+  model: string | null = null;
   /** 会话级 token 累计（侧栏「12.4k tok」的真实数据源） */
   tokensIn = 0;
   tokensOut = 0;
@@ -88,6 +92,8 @@ export class SessionStore {
       s.title = r.title;
       s.createdAt = r.createdAt;
       s.messages = r.messages;
+      s.protocol = r.protocol === 'anthropic' || r.protocol === 'openai' ? r.protocol : null;
+      s.model = r.model ?? null;
       this.sessions.set(r.id, s);
     }
     // 恢复任务记录（running 态只存在于内存；若落库盘里出现，说明上次进程被杀 → 记为中断）
@@ -124,9 +130,13 @@ export class SessionStore {
 
   listTasks(): TaskRecord[] { return this.tasks.slice(0, 200); }
 
-  create(): Session {
+  create(init?: { protocol?: SessionProtocol | null; model?: string | null }): Session {
     const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const s = new Session(id);
+    if (init) {
+      s.protocol = init.protocol ?? null;
+      s.model = init.model ?? null;
+    }
     this.sessions.set(id, s);
     this.save(s);
     return s;
@@ -135,7 +145,9 @@ export class SessionStore {
   /** 落库（每次消息处理完调用；事务整存整取） */
   save(s: Session): void {
     try {
-      this.persistence?.saveSession(s.id, s.title, s.createdAt, s.messages);
+      this.persistence?.saveSession(s.id, s.title, s.createdAt, s.messages, {
+        protocol: s.protocol, model: s.model,
+      });
     } catch (e) {
       console.error(`[persistence] 会话 ${s.id} 落库失败:`, e instanceof Error ? e.message : e);
     }
@@ -157,6 +169,7 @@ export class SessionStore {
         turns: s.messages.filter(m => m.role === 'user').length,
         tokensIn: s.tokensIn, tokensOut: s.tokensOut,
         busy: s.busy, pendingApprovals: s.pendingCount,
+        protocol: s.protocol, model: s.model,
       }));
   }
 }

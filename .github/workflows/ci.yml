@@ -43,3 +43,6 @@ jobs:
 
       - name: 全量构建（core / server / cli / web）
         run: npm run build
+
+      - name: 模型切换离线 E2E（拉起构建产物，mock 全链路）
+        run: npx tsx scripts/e2e-model-switch.ts

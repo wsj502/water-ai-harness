@@ -43,7 +43,7 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
-    yield { type: 'turn_start', turn };
+    yield { type: 'turn_start', turn, model: opts.model };
 
     // ---- 一轮模型调用：流式收集 ----
     const parts: Part[] = [];

@@ -98,7 +98,7 @@ export interface Provider {
 // ---------- Agent Loop 事件（内核 → UI） ----------
 
 export type LoopEvent =
-  | { type: 'turn_start'; turn: number }
+  | { type: 'turn_start'; turn: number; model?: string }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'tool_pending'; call: ToolUsePart }

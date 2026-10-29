@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { WMessage } from '@water/core';
 
-interface SessionRow { id: string; title: string; created_at: number }
+interface SessionRow { id: string; title: string; created_at: number; protocol?: string | null; model?: string | null }
 interface MessageRow { session_id: string; seq: number; role: string; parts: string }
 export interface TaskRow {
   id: string; session_id: string; title: string;
@@ -50,11 +50,21 @@ export class SessionPersistence {
         tokens_out INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // M1 迁移：老库补会话级模型覆盖两列（新库 CREATE 未含；重复执行安全）
+    this.addColumnIfMissing('sessions', 'protocol', 'TEXT');
+    this.addColumnIfMissing('sessions', 'model', 'TEXT');
   }
 
-  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[] }[] {
+  private addColumnIfMissing(table: string, column: string, ddl: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
+    if (!cols.some(c => c.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
+  }
+
+  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[]; protocol?: string | null; model?: string | null }[] {
     const sessions = this.db
-      .prepare('SELECT id, title, created_at FROM sessions ORDER BY created_at DESC')
+      .prepare('SELECT id, title, created_at, protocol, model FROM sessions ORDER BY created_at DESC')
       .all() as unknown as SessionRow[];
     const msgStmt = this.db.prepare(
       'SELECT role, parts FROM messages WHERE session_id = ? ORDER BY seq',
@@ -65,18 +75,24 @@ export class SessionPersistence {
         role: r.role as WMessage['role'],
         parts: JSON.parse(r.parts) as WMessage['parts'],
       }));
-      return { id: s.id, title: s.title, createdAt: s.created_at, messages };
+      return {
+        id: s.id, title: s.title, createdAt: s.created_at, messages,
+        protocol: s.protocol ?? null, model: s.model ?? null,
+      };
     });
   }
 
   /** 整存整取：删旧插新（事务保证原子性） */
-  saveSession(id: string, title: string, createdAt: number, messages: WMessage[]): void {
+  saveSession(
+    id: string, title: string, createdAt: number, messages: WMessage[],
+    config?: { protocol?: string | null; model?: string | null },
+  ): void {
     this.db.exec('BEGIN');
     try {
       this.db.prepare(
-        'INSERT INTO sessions (id, title, created_at) VALUES (?, ?, ?) ' +
-        'ON CONFLICT(id) DO UPDATE SET title = excluded.title',
-      ).run(id, title, createdAt);
+        'INSERT INTO sessions (id, title, created_at, protocol, model) VALUES (?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(id) DO UPDATE SET title = excluded.title, protocol = excluded.protocol, model = excluded.model',
+      ).run(id, title, createdAt, config?.protocol ?? null, config?.model ?? null);
       this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id);
       const ins = this.db.prepare(
         'INSERT INTO messages (session_id, seq, role, parts) VALUES (?, ?, ?, ?)',
