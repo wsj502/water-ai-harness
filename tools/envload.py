@@ -192,6 +192,17 @@ def main() -> int:
 
     env = os.environ.copy()
     env.update(loaded)
+
+    # Windows：CreateProcess 不查 PATHEXT，npm 全局命令是 .cmd shim，
+    # 必须用 shutil.which 解析出真实路径，.cmd/.bat 再包一层 cmd /c
+    if os.name == "nt":
+        import shutil
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd[0] = resolved
+        if re.search(r"\.(cmd|bat)$", cmd[0], re.IGNORECASE):
+            cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c"] + cmd
+
     print(f"[envload] 启动子进程：{' '.join(cmd[:2])} ...（环境变量仅注入子进程，不落盘不回显）")
     try:
         return subprocess.call(cmd, env=env, cwd=PROJECT_ROOT)
