@@ -34,7 +34,7 @@
 | P1 | 内核：Agent Loop + Provider + 内置工具 | ✅ 完成（GLM 联调通过） | [02-Agent Loop](docs/articles/02-Agent-Loop解剖.md) |
 | P2 | CLI 与 npm 分发 | ✅ 完成 | [04-CLI工程化](docs/articles/04-CLI工程化与npm发布.md) |
 | P3 | Server + Web UI | ✅ 完成（mock 联调通过，GLM 待联调） | [03](docs/articles/03-SSE流式协议设计.md) / [05](docs/articles/05-三端共用一套会话协议.md) |
-| P4 | Tauri 桌面端 | 🚧 骨架完成，编译验证中 | [06-Tauri桌面端](docs/articles/06-Tauri桌面端.md) |
+| P4 | Tauri 桌面端 | ✅ 完成（窗口实测通过） | [06-Tauri桌面端](docs/articles/06-Tauri桌面端.md) |
 | P5 | 插件系统 | ✅ 完成（含 MCP 桥接） | [07-插件系统设计](docs/articles/07-插件系统设计.md) |
 | P6 | Docker 镜像 + 运维部署文档 | ✅ 完成（docker build 待有 Docker 的机器验证） | [08-从源码到生产](docs/articles/08-从源码到生产.md) |
 

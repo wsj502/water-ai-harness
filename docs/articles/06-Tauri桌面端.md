@@ -77,5 +77,15 @@ CORS 已由 server 的 `cors()` 中间件放行。
 
 - [x] Tauri 2 骨架（tauri.conf.json / lib.rs sidecar 管理）
 - [x] Web API 基地址桌面适配（`__TAURI__` 检测）
-- [ ] 桌面窗口实测（编译完成后）
+- [x] 桌面窗口实测（2026-10-29：窗口弹出 + sidecar 拉起 server + 前端加载成功）
 - [ ] Node SEA sidecar（生产硬化，后续迭代）
+- [ ] `tauri build` 出 MSI 安装包（后续迭代）
+
+### 踩坑记录（首次编译/启动）
+
+| 坑 | 解法 |
+|---|---|
+| `tauri::Manager` trait 未导入（`app.manage`/`window.state` 报 E0599） | `use tauri::Manager;` |
+| `frontendDist` 写成相对 desktop 根 | 必须相对 `src-tauri`：`../../web/dist` |
+| sidecar 起来就崩 `EADDRINUSE :3210` | 开发期遗留的测试 server 占端口；固定端口的代价（生产应随机端口+端口文件） |
+| 两个 `tauri dev` 并行 → `app.exe` 文件锁（os error 5） | 单实例开发；或先杀残留进程 |
