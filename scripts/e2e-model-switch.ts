@@ -33,8 +33,8 @@ async function jfetch<T>(url: string, init?: RequestInit): Promise<{ status: num
   return { status: r.status, body: await r.json().catch(() => ({})) as T };
 }
 
-/** 读一条 SSE 流直到 finish，返回全部事件（帧解析与 web 端同构） */
-async function readSSE(url: string, init: RequestInit): Promise<Array<Record<string, unknown>>> {
+/** 读一条 SSE 流直到 finish，返回全部事件（帧解析与 web 端同构；ids 收集帧 id） */
+async function readSSE(url: string, init: RequestInit, ids?: string[]): Promise<Array<Record<string, unknown>>> {
   const resp = await fetch(url, init);
   if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
   const reader = resp.body.getReader();
@@ -49,6 +49,8 @@ async function readSSE(url: string, init: RequestInit): Promise<Array<Record<str
     while ((idx = buf.indexOf('\n\n')) >= 0) {
       const frame = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
+      const idLine = frame.split('\n').find(l => l.startsWith('id:'));
+      if (idLine && ids) ids.push(idLine.slice(3).trim());
       const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
       if (!data) continue;
       try {
@@ -112,10 +114,20 @@ async function main(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: '看看有什么文件' }),
     });
-    const ev1 = await readSSE(`${BASE}/api/sessions/${s1.body.id}/messages`, post(s1.body.id));
+    const frameIds: string[] = [];
+    const ev1 = await readSSE(`${BASE}/api/sessions/${s1.body.id}/messages`, post(s1.body.id), frameIds);
     const ts1 = ev1.find(e => e.type === 'turn_start') as { model?: string } | undefined;
     ok(ts1?.model === 'deepseek-chat', 'SSE turn_start.model = deepseek-chat');
     ok(ev1.at(-1)?.type === 'finish', 'SSE 正常 finish');
+    ok(frameIds.length > 0 && frameIds[0] === '1', `SSE 帧带递增 id（首帧 id=${frameIds[0]}）`);
+
+    // ---- 3.5 事件回放（M3）：断线补帧端点 ----
+    const replay = await jfetch<{ events: Array<{ seq: number; ev: { type: string } }>; busy: boolean }>(`${BASE}/api/sessions/${s1.body.id}/events?since=0`);
+    ok(replay.status === 200 && replay.body.events.length === ev1.length, `events?since=0 回放完整（${replay.body.events.length} 条）`);
+    ok(replay.body.events[0]?.ev.type === 'turn_start', '回放首条是 turn_start');
+    ok(replay.body.events.every((e, k) => e.seq === k + 1), 'seq 从 1 连续递增');
+    const replay2 = await jfetch<{ events: unknown[] }>(`${BASE}/api/sessions/${s1.body.id}/events?since=${replay.body.events.length}`);
+    ok(replay2.body.events.length === 0, 'since=末尾 返回空（增量游标语义）');
 
     // ---- 4. 运行时切换模型：不重启进程，下一条消息即生效 ----
     const patched = await jfetch<{ ok: boolean; model: string | null; protocol: string | null }>(`${BASE}/api/sessions/${s1.body.id}/config`, {

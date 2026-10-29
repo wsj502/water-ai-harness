@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### 新增（M3 · Web 体验：渲染/回放/diff）
+
+- 零依赖 markdown 渲染（`apps/web/src/markdown.ts` + `Md.tsx`）：手写子集解析器（围栏代码/标题/列表/引用/行内 code、粗斜体/链接），**返回 React 元素而非 HTML 字符串——不碰 innerHTML，XSS 免疫是架构保证**；链接协议白名单（http/https），`javascript:` 等降级纯文本
+- SSE 事件回放：每会话维护事件环形缓冲（每条消息运行开始重置，容量 300），SSE 帧携带 `id: <seq>`；新端点 `GET /api/sessions/:id/events?since=<seq>` 增量拉取
+- Web 断线补帧：流异常断开（非用户中断）自动轮询 events 端点直至 finish（10 分钟上限）；**刷新页面时 busy 会话可接上正在运行的事件流**
+- edit 审批卡升级为行级 diff（`diff.ts` 朴素 LCS）：ctx 灰 / del 红 / add 绿 + `+N −M` 统计条，替换原"全删全增"渲染
+- 新增 `test:web`（markdown 块级/行内/未闭合容错/**XSS 契约**/diff 三态，进 CI）；E2E 扩至 27 断言（帧 id 递增、回放完整性、增量游标语义）
+
 ### 新增（M2 · 内核深化：上下文管理与容错）
 
 - 内核新增上下文管理器（`context.ts`，00-导读架构图「CTX」模块落地）：中英混合 token 估算启发式 + 确定性压缩（先裁旧 tool_result 带占位标记 → 再丢最旧轮次，保证首条非 system 消息为 user 的协议合法性）

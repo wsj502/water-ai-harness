@@ -38,6 +38,12 @@ interface PendingApproval {
   resolve: (d: ApprovalDecision) => void;
 }
 
+/** 回放缓冲的事件条目（SSE 帧的 id 即 seq） */
+export interface BufferedEvent {
+  seq: number;
+  ev: unknown;
+}
+
 export class Session {
   readonly id: string;
   createdAt = Date.now();
@@ -52,9 +58,29 @@ export class Session {
   tokensOut = 0;
   /** 同一时刻只允许一条消息在跑（MVP 约束，避免历史交错） */
   busy = false;
+  /** M3：当前运行的事件回放缓冲（每条消息开始时重置；断线补帧/刷新接流用） */
+  events: BufferedEvent[] = [];
+  private seq = 0;
   private pending = new Map<string, PendingApproval>();
 
   constructor(id: string) { this.id = id; }
+
+  /** 记录事件进回放缓冲，返回它的 seq（SSE 帧 id） */
+  recordEvent(ev: unknown): number {
+    this.events.push({ seq: ++this.seq, ev });
+    if (this.events.length > 300) this.events.shift();
+    return this.seq;
+  }
+
+  /** 每条消息运行开始时清空（缓冲只覆盖"当前这一跑"，历史由 messages 端点负责） */
+  resetEventBuffer(): void {
+    this.events = [];
+    this.seq = 0;
+  }
+
+  eventsSince(since: number): BufferedEvent[] {
+    return this.events.filter(e => e.seq > since);
+  }
 
   /** 给 Agent Loop 用的 approve 回调 */
   waitApproval(call: ToolUsePart): Promise<ApprovalDecision> {

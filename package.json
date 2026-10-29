@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit -p packages/core",
     "test:loop": "tsx scripts/loop-mock-test.ts",
     "test:context": "tsx scripts/test-context.ts",
+    "test:web": "tsx scripts/test-web-pure.ts",
     "test:e2e": "tsx scripts/e2e-model-switch.ts",
     "build": "tsc -b packages/core apps/server apps/cli && npm run build -w apps/web"
   },
