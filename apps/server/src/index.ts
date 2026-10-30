@@ -396,7 +396,6 @@ app.post('/api/sessions/:id/approve', async c => {
 app.post('/api/sessions/:id/messages', async c => {
   const s = store.get(c.req.param('id'));
   if (!s) return c.json({ error: 'session not found' }, 404);
-  if (s.busy) return c.json({ error: '会话忙：上一条消息还在处理' }, 409);
   if (s.archived) return c.json({ error: '会话已归档：历史可查看；如需继续对话请先取消归档' }, 400);
 
   const body = await c.req.json<{ text?: string }>().catch(() => null);
@@ -447,19 +446,37 @@ app.post('/api/sessions/:id/messages', async c => {
     : undefined;
   const compactSummarize = !mock && process.env.WATER_COMPACT_SUMMARY !== '0';
 
-  s.busy = true;
-  s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
-  if (s.title === '新会话') s.title = body.text.trim().slice(0, 30);
-  s.resetEventBuffer(); // M3：回放缓冲只覆盖本次运行
-
-  // 请求中断 → 中断 Loop + 悬挂审批全拒
-  const ac = new AbortController();
-  c.req.raw.signal.addEventListener('abort', () => {
-    ac.abort();
-    s.denyAllPending();
-  });
+  // M14 消息排队：深度上限 5（含执行中），超出 429；排队请求先收 queued 事件再等待闸门
+  if (s.waiters >= 5) {
+    return c.json({ error: '队列已满（5 条）：请稍候再发' }, 429);
+  }
+  const turn = s.enqueueTurn();
 
   return streamSSE(c, async stream => {
+    if (turn.position > 0) {
+      // 瞬时状态事件：不进回放缓冲（不属于本次运行的事件序列）
+      await stream.writeSSE({ event: 'queued', data: JSON.stringify({ type: 'queued', position: turn.position }) });
+    }
+    await turn.wait(); // 等前一条完成（按到达顺序串行）
+
+    // 排队期间客户端已断开：跳过执行，直接释放闸门
+    if (c.req.raw.signal.aborted) {
+      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
+      turn.release();
+      return;
+    }
+
+    s.busy = true;
+    s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
+    if (s.title === '新会话') s.title = text.slice(0, 30);
+    s.resetEventBuffer(); // M3：回放缓冲只覆盖本次运行
+
+    // 请求中断 → 中断 Loop + 悬挂审批全拒（只作用于本次已获得执行权的运行）
+    const ac = new AbortController();
+    c.req.raw.signal.addEventListener('abort', () => {
+      ac.abort();
+      s.denyAllPending();
+    });
     // 审批桥：Loop 内发起审批时，先向客户端广播 approval_required，再等审批端点 resolve
     const approve = (call: ToolUsePart) => {
       void stream.writeSSE({
@@ -521,6 +538,7 @@ app.post('/api/sessions/:id/messages', async c => {
       s.busy = false;
       s.denyAllPending();
       store.save(s); // 消息处理结束 → 落库
+      turn.release(); // M14：放行下一条排队消息
     }
   });
 });
