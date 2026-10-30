@@ -24,11 +24,23 @@ export class PermissionEngine {
   constructor(private opts: {
     /** 低风险工具自动放行（设置页开关） */
     autoAllowLowRisk?: boolean;
-  } = {}) {}
+    /** M21：初始会话级授权（子代理继承父会话的文件粒度 write:/edit: 授权） */
+    initialGrants?: string[];
+  } = {}) {
+    for (const g of this.opts.initialGrants ?? []) this.sessionGrants.add(g);
+  }
 
   setRules(rules: PermissionRule[]): void { this.rules = rules; }
 
   grantSession(key: string): void { this.sessionGrants.add(key); }
+
+  /**
+   * M21：导出可继承的授权——仅前缀匹配（如 write:/edit:）的带参 key；
+   * 裸工具名授权（如主循环会话级放行的 "write"）不导出：主循环的信任不应外溢为子代理写权限。
+   */
+  inheritableGrants(prefixes: string[]): string[] {
+    return [...this.sessionGrants].filter(k => prefixes.some(p => k.startsWith(p)));
+  }
 
   /** 判断一次调用是否需要审批 */
   check(toolName: string, risk: Risk, argSummary: string): Decision {
