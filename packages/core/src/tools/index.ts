@@ -290,3 +290,23 @@ export const builtinTools: Tool[] = [readTool, writeTool, editTool, grepTool, gl
 export function findTool(name: string): Tool | undefined {
   return builtinTools.find(t => t.spec.name === name);
 }
+
+// ---------- M17：配置式声明工具（prompt 型） ----------
+
+/**
+ * 把 config.json tools[] 条目包装成 Tool（执行语义 = prompt 型，issue #39 定案）：
+ * 模型调用 → 模板中 $参数名 替换为入参 → 渲染文本作为 tool_result 返回给模型。
+ * 零副作用（不碰文件/网络/命令），风险级 low；与内置/其他声明重名的检查由注册方（server）负责。
+ */
+export function configToolToTool(ct: import('../config.js').ConfigTool): Tool {
+  return {
+    risk: 'low',
+    spec: {
+      name: ct.name,
+      description: ct.description,
+      inputSchema: ct.parameters ?? { type: 'object', properties: {} },
+    },
+    argSummary: i => JSON.stringify(i).slice(0, 60),
+    run: async input => ct.template.replace(/\$(\w+)/g, (_, k: string) => String(input[k] ?? '')),
+  };
+}

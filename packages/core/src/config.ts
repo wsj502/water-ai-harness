@@ -45,6 +45,8 @@ interface FileConfig {
   models?: ModelInfo[];
   /** M13：配置式斜杠命令（零代码插件——只是 prompt 模板，无执行逻辑） */
   commands?: ConfigCommand[];
+  /** M17：配置式声明工具（配置即插件进阶——prompt 型，模板 $参数名 替换，模型可自主调用） */
+  tools?: ConfigTool[];
 }
 
 /** 配置式命令：模板中 $ARGUMENTS 替换为用户参数 */
@@ -52,6 +54,14 @@ export interface ConfigCommand {
   name: string;
   template: string;
   description?: string;
+}
+
+/** 配置式声明工具（M17）：parameters 为 JSON Schema（原样透传给模型）；执行语义 = prompt 型（issue #39 定案） */
+export interface ConfigTool {
+  name: string;
+  description: string;
+  template: string;
+  parameters?: Record<string, unknown>;
 }
 
 export const PROTOCOL_DEFAULTS = {
@@ -125,13 +135,44 @@ function parseConfigCommands(raw: unknown, src: string): ConfigCommand[] {
   });
 }
 
+/** 校验配置式声明工具条目；非法即抛错（启动期暴露）。字段白名单——无任何执行体字段（prompt 型，issue #39 定案） */
+function parseConfigTools(raw: unknown, src: string): ConfigTool[] {
+  if (!Array.isArray(raw)) throw new Error(`${src} tools 字段必须是数组`);
+  return raw.map((e, i) => {
+    const at = `${src} tools[${i}]`;
+    if (typeof e !== 'object' || e === null) throw new Error(`${at} 必须是对象`);
+    for (const k of Object.keys(e as Record<string, unknown>)) {
+      if (k !== 'name' && k !== 'description' && k !== 'template' && k !== 'parameters') {
+        throw new Error(`${at} 不支持的字段: ${k}（仅 name/description/template/parameters——无执行体，防夹带）`);
+      }
+    }
+    const t = e as { name?: unknown; description?: unknown; template?: unknown; parameters?: unknown };
+    if (typeof t.name !== 'string' || !COMMAND_NAME_RE.test(t.name)) {
+      throw new Error(`${at} name 必须是字母开头的字母/数字/连字符`);
+    }
+    if (typeof t.description !== 'string' || !t.description.trim()) {
+      throw new Error(`${at} description 必填非空（模型靠它判断何时调用该工具）`);
+    }
+    if (typeof t.template !== 'string' || !t.template.trim()) throw new Error(`${at} template 必须是非空字符串`);
+    if (t.parameters !== undefined && (typeof t.parameters !== 'object' || t.parameters === null)) {
+      throw new Error(`${at} parameters 必须是 JSON Schema 对象`);
+    }
+    return {
+      name: t.name,
+      description: t.description,
+      template: t.template,
+      ...(t.parameters !== undefined ? { parameters: t.parameters as Record<string, unknown> } : {}),
+    };
+  });
+}
+
 export function loadFileConfig(): FileConfig {
   // WATER_CONFIG_FILE：测试/多环境注入配置路径（缺省 ~/.water/config.json）
   const p = process.env.WATER_CONFIG_FILE ?? path.join(homedir(), '.water', 'config.json');
   if (!existsSync(p)) return {};
-  let j: FileConfig & { models?: unknown; commands?: unknown };
+  let j: FileConfig & { models?: unknown; commands?: unknown; tools?: unknown };
   try {
-    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig & { models?: unknown; commands?: unknown };
+    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig & { models?: unknown; commands?: unknown; tools?: unknown };
   } catch (e) {
     throw new Error(`读取 ${p} 失败: ${e instanceof Error ? e.message : e}`);
   }
@@ -143,12 +184,14 @@ export function loadFileConfig(): FileConfig {
   }
   const models = j.models === undefined ? undefined : parseCustomModels(j.models, '~/.water/config.json');
   const commands = j.commands === undefined ? undefined : parseConfigCommands(j.commands, '~/.water/config.json');
-  const { models: _m, commands: _c, ...rest } = j as FileConfig & { models?: unknown; commands?: unknown };
-  if (models === undefined && commands === undefined) return rest;
+  const tools = j.tools === undefined ? undefined : parseConfigTools(j.tools, '~/.water/config.json');
+  const { models: _m, commands: _c, tools: _t, ...rest } = j as FileConfig & { models?: unknown; commands?: unknown; tools?: unknown };
+  if (models === undefined && commands === undefined && tools === undefined) return rest;
   return {
     ...rest,
     ...(models !== undefined ? { models } : {}),
     ...(commands !== undefined ? { commands } : {}),
+    ...(tools !== undefined ? { tools } : {}),
   };
 }
 

@@ -165,6 +165,11 @@ export const api = {
     fetch(`${BASE}/api/plugins`).then(r => json<{ configCommands: Array<{ name: string; description?: string }> }>(r))
       .then(j => j.configCommands ?? []),
 
+  /** M17：配置式声明工具清单（~/.water/config.json tools[]，prompt 型） */
+  configTools: () =>
+    fetch(`${BASE}/api/plugins`).then(r => json<{ configTools: Array<{ name: string; description: string; hasParameters: boolean }> }>(r))
+      .then(j => j.configTools ?? []),
+
   listTasks: () =>
     fetch(`${BASE}/api/tasks`).then(r => json<{ tasks: TaskRecord[] }>(r)).then(j => j.tasks),
 

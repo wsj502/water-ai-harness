@@ -82,9 +82,20 @@ async function main(): Promise<void> {
   const workdir = mkdtempSync(path.join(tmpdir(), 'water-e2e-'));
   const workdir2 = mkdtempSync(path.join(tmpdir(), 'water-e2e2-'));
   // M13：配置式命令——测试注入的临时 config.json（含展开验证用模板）
+  // M17：配置式声明工具（prompt 型）——seal 工具，E2E 第 14 节实证「声明→注册→调用→模板回填」
   const cfgFile = path.join(workdir, 'test-config.json');
   writeFileSync(cfgFile, JSON.stringify({
     commands: [{ name: 'say', template: '请原样输出以下内容：[$ARGUMENTS]', description: '回显命令' }],
+    tools: [{
+      name: 'seal',
+      description: '给文本盖章（M17 演示）',
+      template: '已盖章：$text',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: '要盖章的文本' } },
+        required: ['text'],
+      },
+    }],
   }), 'utf8');
   const child = spawn(process.execPath, [SERVER], {
     env: {
@@ -271,11 +282,16 @@ async function main(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    // 两条并发：第一条立即执行，第二条排队（position=1）后自动执行
-    const [r1, r2] = await Promise.all([
-      readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第一条消息')),
-      readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第二条消息')),
-    ]);
+    // 两条并发：第一条先发并确认已获得执行权（busy），第二条必然排队（position=1）
+    // ——不依赖跨连接的到达顺序（两条 fetch 可能走不同 socket，服务端到达序无保证，曾 flaky）
+    const q1 = readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第一条消息'));
+    for (let i = 0; i < 50; i++) {
+      const list = await jfetch<{ sessions: Array<{ id: string; busy: boolean }> }>(`${BASE}/api/sessions`);
+      if (list.body.sessions.some(s => s.id === sq.body.id && s.busy)) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    const q2 = readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第二条消息'));
+    const [r1, r2] = await Promise.all([q1, q2]);
     ok(r1.at(-1)?.type === 'finish' && r2.at(-1)?.type === 'finish', '并发两条均正常完成');
     // 历史顺序 = 到达顺序（闸门串行保证）
     const hq = await jfetch<{ messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> }>(`${BASE}/api/sessions/${sq.body.id}/messages`);
@@ -477,6 +493,27 @@ async function main(): Promise<void> {
     ok(hC.includes('M16 排队验证') && !hC.includes('占住并发槽'), 'M16 C 的历史只含自己的消息');
     ok(hA.includes('占住并发槽') && !hA.includes('M16 排队验证'), 'M16 A 的历史未被 B/C 污染');
     ok(!hB.includes('M16 排队验证'), 'M16 B 的历史未被 C 污染');
+
+    // ---- 14. 配置式声明工具（M17：声明→注册→模型调用→模板回填，prompt 型）----
+    const perms17 = await jfetch<{ rules: Array<{ tool: string; risk: string }> }>(`${BASE}/api/permissions`);
+    ok(perms17.body.rules.some(r => r.tool === 'seal' && r.risk === 'low'),
+      'M17 /api/permissions 含配置式工具 seal（low：零执行逻辑）');
+    const pl17 = await jfetch<{ configTools: Array<{ name: string; hasParameters: boolean }> }>(`${BASE}/api/plugins`);
+    ok(pl17.body.configTools?.some(t => t.name === 'seal' && t.hasParameters),
+      'M17 /api/plugins 列出配置式工具 seal（带参数声明）');
+    const s17 = await jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const ev17 = await readSSE(`${BASE}/api/sessions/${s17.body.id}/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '[[mock:m17tool:seal]] 调用配置式工具' }),
+    });
+    const pending17 = ev17.find(e => e.type === 'tool_pending') as { call?: { name?: string } } | undefined;
+    ok(pending17?.call?.name === 'seal', 'M17 mock 按剧本调用 seal（tool_pending 可见）');
+    const res17 = ev17.find(e => e.type === 'tool_result') as { result?: string; isError?: boolean } | undefined;
+    ok(res17?.result === '已盖章：hello-m17' && res17.isError === false,
+      'M17 prompt 型执行：模板 $text 展开为入参（结果回填实证）');
+    ok(ev17.at(-1)?.type === 'finish', 'M17 场景正常 finish');
 
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {

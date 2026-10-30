@@ -33,6 +33,15 @@
 - **直播与回放同构**：时间线由 sub_event 帧序列确定性折叠——vitest 锁定「同一帧序列两次折叠结果完全一致」，回放（`?since=`）天然重建同一视图
 - 零新前端依赖（React 元素渲染纪律不变）；water.css 新增时间线样式（轮次竖线缩进）
 
+### 新增（M17 · 配置式声明工具——配置即插件进阶）
+
+- `~/.water/config.json` 新增 `tools: [{ name, description, template, parameters? }]`：声明 JSON Schema 的工具启动时直接进注册表，模型可见可自主调用——「零代码扩展」从命令层（M13）推进到工具层
+- **执行语义 = prompt 型（issue #39 定案）**：工具调用 → 模板中 `$参数名` 替换为入参 → 渲染文本作为 tool_result 返回；零副作用（不碰文件/网络/命令）→ 风险级 low；与 M13 命令同源的安全模型，HTTP 型（凭据红线 + 防 SSRF 面大）明确暂缓
+- 安全底线：字段白名单（仅 name/description/template/parameters，无任何执行体字段——夹带 command 即拒）；description 必填（模型靠它决策）；与内置/其他声明重名启动即拒
+- `configToolToTool` 包装器在内核（tools/index.ts，可单测）；`/api/plugins` 暴露 `configTools` 清单，插件页新增「🔧 配置式工具」卡
+- MockProvider 新增 `[[mock:m17tool:<名>]]` 剧本；E2E 第 14 节实证「声明 → permissions 可见 → mock 调用 → 模板 `$text` 展开回填」
+- **修复两处并行化/注册表问题**：① 插件加载后 `allTools` 被重置导致配置式工具在插件存在时丢失（合并三源：内置 + 配置式 + 插件）；② 并发会话同毫秒完成时任务 id `t_<毫秒>` 撞 tasks 主键——id 追加随机后缀（与 Session id 同模式，#43）
+
 ## [0.4.0] - 2026-10-30
 
 v0.4.0 主题：**子代理全能力（流式+可写）、配置式扩展、会话消息排队**。
