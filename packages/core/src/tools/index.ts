@@ -13,6 +13,11 @@ import type { Risk } from '../permissions.js';
 export interface ToolContext {
   /** 工作区根目录，所有相对路径都解析到这里 */
   cwd: string;
+  /**
+   * M8：派生只读研究子代理（由 Agent Loop 注入；嵌套子代理内不可用——防递归）。
+   * 工具层只依赖这个注入点，内核不需要为子代理引入新的顶层概念。
+   */
+  spawnTask?: (prompt: string) => Promise<string>;
 }
 
 export interface Tool {
@@ -241,7 +246,33 @@ const shellTool: Tool = {
   },
 };
 
-export const builtinTools: Tool[] = [readTool, writeTool, editTool, grepTool, globTool, shellTool];
+// ---------- M8：只读研究子代理 ----------
+
+const taskTool: Tool = {
+  // 不碰文件，但每次派生是一整段子对话的 token 成本 → medium（用户可「本会话总是允许」）
+  risk: 'medium',
+  spec: {
+    name: 'task',
+    description: '派生只读研究子代理：给它一个自包含的研究问题，它用 read/grep/glob 收集信息并返回结论。'
+      + '适合「先调研 X 再回答」类子任务，避免主上下文被探索性内容塞满。'
+      + '子代理不能修改文件、不能再派生子代理，最多 10 轮。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: '研究问题（必须自包含：子代理看不到当前对话历史）' },
+        description: { type: 'string', description: '一句话任务标题（展示用，可选）' },
+      },
+      required: ['prompt'],
+    },
+  },
+  argSummary: i => str(i.description) || str(i.prompt).slice(0, 60),
+  async run(input, ctx) {
+    if (!ctx.spawnTask) throw new Error('task 工具在此环境不可用（子代理不能再派生子代理）');
+    return ctx.spawnTask(str(input.prompt));
+  },
+};
+
+export const builtinTools: Tool[] = [readTool, writeTool, editTool, grepTool, globTool, shellTool, taskTool];
 
 export function findTool(name: string): Tool | undefined {
   return builtinTools.find(t => t.spec.name === name);

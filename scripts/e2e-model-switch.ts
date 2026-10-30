@@ -133,6 +133,11 @@ async function main(): Promise<void> {
     const replay2 = await jfetch<{ events: unknown[] }>(`${BASE}/api/sessions/${s1.body.id}/events?since=${replay.body.events.length}`);
     ok(replay2.body.events.length === 0, 'since=末尾 返回空（增量游标语义）');
 
+    // ---- 3.6 工具清单含 M8 子代理（task，medium 风险）----
+    const perms = await jfetch<{ rules: Array<{ tool: string; risk: string }> }>(`${BASE}/api/permissions`);
+    const taskRule = perms.body.rules.find(r => r.tool === 'task');
+    ok(taskRule?.risk === 'medium', 'task 子代理工具在清单中（medium：token 成本需审批）');
+
     // ---- 4. 运行时切换模型：不重启进程，下一条消息即生效 ----
     const patched = await jfetch<{ ok: boolean; model: string | null; protocol: string | null }>(`${BASE}/api/sessions/${s1.body.id}/config`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'glm-4.6' }),

@@ -536,7 +536,7 @@ function Block({ block, sessionId, model, streaming }: {
 
 /** 工具图标：与 P0 原型一致（read 📖 / grep 🔍 / edit ✏️ …） */
 const TOOL_ICON: Record<string, string> = {
-  read: '📖', grep: '🔍', glob: '🗂', edit: '✏️', write: '📝', shell: '💻',
+  read: '📖', grep: '🔍', glob: '🗂', edit: '✏️', write: '📝', shell: '💻', task: '🤖',
 };
 
 /** 参数摘要：展示主参数而非整个 JSON（原型工具卡头部样式） */
@@ -550,6 +550,7 @@ function argSummary(name: string, input: Record<string, unknown>): string {
       return `pattern="${s(input.pattern ?? '')}"${inc}`;
     }
     case 'shell': return s(input.command ?? '');
+    case 'task': return s(input.description ?? '') || `研究：${s(input.prompt ?? '').slice(0, 40)}`;
     default: return JSON.stringify(input).slice(0, 120);
   }
 }
