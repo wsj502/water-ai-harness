@@ -477,12 +477,26 @@ app.post('/api/sessions/:id/messages', async c => {
       ac.abort();
       s.denyAllPending();
     });
-    // 审批桥：Loop 内发起审批时，先向客户端广播 approval_required，再等审批端点 resolve
+    // 审批桥：Loop 内发起审批时，先向客户端广播 approval_required，再等审批端点 resolve。
+    // M15：子级审批（callId 含 `${task调用id}:` 命名空间前缀）包成 sub_event 嵌套帧，
+    // 归入 task 工具卡的子代理过程区，并进回放缓冲（刷新接流后审批卡可重现，
+    // 后续 tool_approved/tool_denied 帧会把状态收拢）；审批端点无需区分父子——
+    // pending 按完整 callId 挂起，resolve 语义与主循环一致。
     const approve = (call: ToolUsePart) => {
-      void stream.writeSSE({
-        event: 'approval_required',
-        data: JSON.stringify({ type: 'approval_required', callId: call.id, call }),
-      });
+      const sep = call.id.indexOf(':');
+      if (sep > 0) {
+        const frame = {
+          type: 'sub_event', callId: call.id.slice(0, sep),
+          ev: { type: 'approval_required', callId: call.id, call },
+        };
+        const seq = s.recordEvent(frame);
+        void stream.writeSSE({ id: String(seq), event: frame.type, data: JSON.stringify(frame) });
+      } else {
+        void stream.writeSSE({
+          event: 'approval_required',
+          data: JSON.stringify({ type: 'approval_required', callId: call.id, call }),
+        });
+      }
       return s.waitApproval(call);
     };
 

@@ -4,6 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseInline, parseMarkdown } from '../apps/web/src/markdown';
 import { diffStats, lineDiff } from '../apps/web/src/diff';
+import { applyEvent, type UiBlock } from '../apps/web/src/state/blocks';
+import type { ToolUsePart } from '@water/core';
 
 describe('markdown 块级', () => {
   const b = parseMarkdown('# 标题\n\n段落一\n\n```ts\nconst a = 1;\nconst b = 2;\n```\n\n- 甲\n- 乙\n\n1. 一\n2. 二\n\n> 引用行');
@@ -66,5 +68,29 @@ describe('行级 diff', () => {
     expect(lineDiff('a\nb', 'a\nb\nc').at(-1)).toMatchObject({ type: 'add', text: 'c' });
     expect(lineDiff('a\nb\nc', 'a\nb').at(-1)).toMatchObject({ type: 'del', text: 'c' });
     expect(lineDiff('same', 'same')).toEqual([{ type: 'ctx', text: 'same' }]);
+  });
+});
+
+describe('子级审批折叠（M15 blocks）', () => {
+  const taskCall: ToolUsePart = { type: 'tool_use', id: 't1', name: 'task', input: { mode: 'write' } };
+  const subWrite: ToolUsePart = { type: 'tool_use', id: 'w1', name: 'write', input: { path: 'a.txt' } };
+  const toolBlock = (bs: UiBlock[]) => bs[0] as Extract<UiBlock, { kind: 'tool' }>;
+
+  it('嵌套 approval_required → waiting 卡；tool_approved 收拢为已批准', () => {
+    let bs = applyEvent([], { type: 'tool_pending', call: taskCall });
+    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'turn_start', turn: 1, model: 'm' } });
+    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } });
+    expect(toolBlock(bs).subApprovals).toEqual([{ fullId: 't1:w1', name: 'write', summary: 'a.txt', status: 'waiting' }]);
+    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'tool_approved', call: subWrite, scope: 'once' } });
+    expect(toolBlock(bs).subApprovals![0]).toMatchObject({ fullId: 't1:w1', status: 'approved' });
+  });
+
+  it('tool_denied 收拢为已拒绝，工具 chips 记录 ⛔', () => {
+    let bs = applyEvent([], { type: 'tool_pending', call: taskCall });
+    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } });
+    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'tool_denied', call: subWrite } });
+    const b = toolBlock(bs);
+    expect(b.subApprovals![0]).toMatchObject({ status: 'denied' });
+    expect(b.subTools).toEqual([{ name: 'write', ok: null }]);
   });
 });

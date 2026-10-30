@@ -18,6 +18,8 @@ export type UiBlock =
     subText?: string;
     subTurns?: number;
     subTools?: Array<{ name: string; ok: boolean | null }>;
+    /** M15：子级审批（sub_event 嵌套的 approval_required 及后续状态；fullId = 命名空间 callId） */
+    subApprovals?: Array<{ fullId: string; name: string; summary: string; status: 'waiting' | 'approved' | 'denied' }>;
   };
 
 /** 把 LoopEvent 应用到块序列（返回新数组，供 React setState） */
@@ -79,20 +81,45 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
       break;
     case 'sub_event': {
       // M12：子代理事件折叠进对应 task 工具卡（文本累积 / 工具时间线 / 轮次计数）
+      // M15：嵌套的 approval_required 记为子级审批；tool_approved/tool_denied 收拢其状态
       return next.map(b => {
         if (b.kind !== 'tool' || b.call.id !== ev.callId) return b;
         const inner = ev.ev as LoopEvent;
         const sub = {
           subText: b.subText ?? '',
           subTurns: b.subTurns ?? 0,
-          subTools: b.subTools ?? [],
+          subTools: [...(b.subTools ?? [])],
+          subApprovals: [...(b.subApprovals ?? [])],
         };
+        const approvalIdx = (subId: string) =>
+          sub.subApprovals.findIndex(a => a.fullId === `${ev.callId}:${subId}`);
         switch (inner.type) {
           case 'turn_start': sub.subTurns++; break;
           case 'text_delta': sub.subText += inner.text; break;
           case 'tool_result': sub.subTools.push({ name: inner.call.name, ok: !inner.isError }); break;
-          case 'tool_denied': sub.subTools.push({ name: inner.call.name, ok: null }); break;
-          default: break; // thinking/usage/compacted 等暂不展开
+          case 'tool_denied': {
+            sub.subTools.push({ name: inner.call.name, ok: null });
+            const i = approvalIdx(inner.call.id);
+            if (i >= 0) sub.subApprovals[i] = { ...sub.subApprovals[i]!, status: 'denied' };
+            break;
+          }
+          case 'tool_approved': {
+            const i = approvalIdx(inner.call.id);
+            if (i >= 0) sub.subApprovals[i] = { ...sub.subApprovals[i]!, status: 'approved' };
+            break;
+          }
+          default:
+            if ((inner as { type: string }).type === 'approval_required') {
+              const a = inner as unknown as ApprovalRequiredEvent;
+              const p = a.call.input?.path;
+              sub.subApprovals.push({
+                fullId: a.callId,
+                name: a.call.name,
+                summary: typeof p === 'string' ? p : JSON.stringify(a.call.input ?? {}).slice(0, 60),
+                status: 'waiting',
+              });
+            }
+            break; // thinking/usage/compacted 等暂不展开
         }
         return { ...b, ...sub };
       });

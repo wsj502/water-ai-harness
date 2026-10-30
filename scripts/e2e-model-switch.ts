@@ -13,7 +13,7 @@
  *   6. 非法模型被 400 拒绝
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -291,6 +291,77 @@ async function main(): Promise<void> {
     ok(tooMany.length >= 1, `深度上限生效（${tooMany.length} 条被 429）`);
     // 清理：等 burst 中成功入队的跑完，避免影响后续
     await new Promise(r => setTimeout(r, 800));
+
+    // ---- 12. 子代理审批透传（M15：子级 write 审批直达审批桥，callId 命名空间嵌套）----
+    const newSession = () => jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }).then(r => r.body.id);
+    /** 流式消费 + 审批即时应答（主循环审批恒 once；子级审批按参数决定）——服务端正挂起等这声 POST */
+    const streamWithApprovals = async (sid: string, text: string, subDecision: 'once' | 'deny') => {
+      const events: Array<Record<string, unknown>> = [];
+      const resp = await fetch(`${BASE}/api/sessions/${sid}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+          if (!data) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(data); } catch { continue; }
+          events.push(ev);
+          const answer = async (callId: unknown, decision: string, label: string) => {
+            const r = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid}/approve`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ callId, decision }),
+            });
+            ok(r.status === 200 && r.body.ok, `${label}（callId=${String(callId)}）`);
+          };
+          if (ev.type === 'approval_required') {
+            await answer(ev.callId, 'once', 'M15 主循环 task 审批端点应答');
+          } else if (ev.type === 'sub_event' && (ev.ev as Record<string, unknown>).type === 'approval_required') {
+            await answer((ev.ev as Record<string, unknown>).callId, subDecision, `M15 子级审批端点应答（${subDecision}）`);
+          }
+          if (ev.type === 'finish') return events;
+        }
+      }
+      return events;
+    };
+    // 批准路径：父级批准 task + 子级批准 write → 真实落盘
+    const sidA = await newSession();
+    const evA = await streamWithApprovals(sidA, '[[mock:m15-task]] 让子代理写文件（这次批准）', 'once');
+    ok(existsSync(path.join(workdir, 'm15-note.txt')), 'M15 批准路径：子代理真实落盘 m15-note.txt');
+    const subApprovalA = evA.find(e => e.type === 'sub_event' && (e.ev as Record<string, unknown>).type === 'approval_required');
+    ok(Boolean(subApprovalA), 'M15 子级审批以 sub_event 嵌套帧广播');
+    ok(Boolean(subApprovalA && String((subApprovalA.ev as Record<string, unknown>).callId).startsWith('mock-task-m15:')),
+      'M15 子级审批 callId 带父级命名空间前缀');
+    ok(evA.some(e => e.type === 'sub_event' && (e.ev as Record<string, unknown>).type === 'tool_approved'),
+      'M15 子级 write 获批（tool_approved 透传）');
+    const taskResA = evA.find(e => e.type === 'tool_result' && (e.call as Record<string, unknown> | undefined)?.name === 'task');
+    ok(Boolean(taskResA) && taskResA!.isError === false, 'M15 批准路径 task 正常完成');
+    ok(evA.at(-1)?.type === 'finish', 'M15 批准路径正常 finish');
+    // 子级审批帧进回放缓冲：刷新接流（events?since=0）可重现审批卡
+    const replay15 = await jfetch<{ events: Array<{ seq: number; ev: Record<string, unknown> }> }>(`${BASE}/api/sessions/${sidA}/events?since=0`);
+    ok(replay15.body.events.some(e => e.ev.type === 'sub_event'
+      && (e.ev.ev as Record<string, unknown>).type === 'approval_required'),
+      'M15 子级审批帧进回放缓冲（刷新接流可重现）');
+    // 拒绝路径：子级 write 被拒 → 文件内容未被改写、子代理继续收尾
+    const sidB = await newSession();
+    const evB = await streamWithApprovals(sidB, '[[mock:m15-task]] 再来一次（这次拒绝子级写入）', 'deny');
+    ok(evB.some(e => e.type === 'sub_event' && (e.ev as Record<string, unknown>).type === 'tool_denied'),
+      'M15 拒绝路径：tool_denied 透传');
+    ok(readFileSync(path.join(workdir, 'm15-note.txt'), 'utf8') === 'written-by-subagent',
+      'M15 拒绝路径：文件未被改写（零落盘增量）');
+    ok(evB.at(-1)?.type === 'finish', 'M15 拒绝路径正常 finish（拒绝不致命）');
 
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {

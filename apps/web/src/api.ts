@@ -81,7 +81,14 @@ export interface QueuedEvent {
   position: number;
 }
 
-export type ServerEvent = LoopEvent | ApprovalRequiredEvent | QueuedEvent;
+/** M15：子级审批请求——嵌套在 sub_event 里（callId 为 `${task调用id}:${子id}` 命名空间） */
+export interface SubApprovalEvent {
+  type: 'sub_event';
+  callId: string;
+  ev: ApprovalRequiredEvent;
+}
+
+export type ServerEvent = LoopEvent | ApprovalRequiredEvent | QueuedEvent | SubApprovalEvent;
 
 async function json<T>(resp: Response): Promise<T> {
   if (!resp.ok) {

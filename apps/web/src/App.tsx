@@ -558,6 +558,7 @@ function argSummary(name: string, input: Record<string, unknown>): string {
 
 function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool' }>; sessionId: string | null }) {
   const [decided, setDecided] = useState(false);
+  const [decidedSub, setDecidedSub] = useState<string[]>([]);
   const { call, status } = block;
 
   const badge =
@@ -571,6 +572,13 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
     if (!sessionId) return;
     setDecided(true);
     try { await api.approve(sessionId, call.id, d); } catch { setDecided(false); }
+  };
+
+  /** M15：子级审批（callId 为 `${task调用id}:${子id}` 命名空间，服务端按完整 id 挂起/resolve） */
+  const decideSub = async (fullId: string, d: 'once' | 'deny') => {
+    if (!sessionId) return;
+    setDecidedSub(ids => [...ids, fullId]);
+    try { await api.approve(sessionId, fullId, d); } catch { setDecidedSub(ids => ids.filter(x => x !== fullId)); }
   };
 
   const waiting = status === 'waiting' && !decided;
@@ -618,6 +626,34 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
           {String(call.input.content).split('\n').length > 12 && (
             <div className="ln"><span className="no">…</span><span className="tx" style={{ color: 'var(--text-2)' }}>（共 {String(call.input.content).split('\n').length} 行）</span></div>
           )}
+        </div>
+      )}
+      {/* M15：子级审批（嵌套在 sub_event 里的 approval_required）——置于折叠区外，需要用户行动 */}
+      {call.name === 'task' && (block.subApprovals?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 6 }}>
+          {block.subApprovals!.map(a => {
+            const acted = a.status !== 'waiting' || decidedSub.includes(a.fullId);
+            return (
+              <div key={a.fullId} className="approval" style={{ margin: '6px 0' }}>
+                <div className="head">
+                  <span className="ico">{a.status === 'denied' ? '⛔' : acted ? '✅' : '⚠'}</span>
+                  <span className="name">子级 {a.name}</span>
+                  <span className="arg">{a.summary}</span>
+                  {a.status === 'waiting' && !decidedSub.includes(a.fullId)
+                    ? <span className="badge wait">等待审批</span>
+                    : <span className={`badge ${a.status === 'denied' ? 'deny' : 'ok'}`}>
+                      {a.status === 'denied' ? '已拒绝' : a.status === 'approved' ? '已批准' : '已提交…'}
+                    </span>}
+                </div>
+                {!acted && (
+                  <div className="actions" style={{ paddingBottom: 12 }}>
+                    <button className="btn primary" onClick={() => decideSub(a.fullId, 'once')}>允许一次</button>
+                    <button className="btn danger" onClick={() => decideSub(a.fullId, 'deny')}>拒绝</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       {/* M12：子代理过程（实时透传的 sub_event 折叠记录） */}

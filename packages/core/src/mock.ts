@@ -15,6 +15,34 @@ export class MockProvider implements Provider {
   async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
     await new Promise(r => setTimeout(r, RTT));
     const hasToolResult = req.messages.some(m => m.role === 'tool');
+    // M15 场景剧本：按用户消息中的标记驱动（默认行为不变）——离线 E2E 用它确定性复现子级审批
+    const lastUser = req.messages.findLast(m => m.role === 'user');
+    const userText = lastUser?.parts[0]?.type === 'text' ? (lastUser.parts[0] as { text: string }).text : '';
+    if (userText.includes('[[mock:m15-sub]]')) {
+      // 子代理对话：首轮请求 write（触发 M15 子级审批），拿到结果后收尾
+      if (!hasToolResult) {
+        yield {
+          type: 'tool_use',
+          call: { type: 'tool_use', id: 'mock-sub-w1', name: 'write', input: { path: 'm15-note.txt', content: 'written-by-subagent' } },
+        };
+        yield { type: 'done', stopReason: 'tool_use' };
+      } else {
+        yield { type: 'text_delta', text: '（mock 子代理）已处理写入请求。' };
+        yield { type: 'usage', inputTokens: 150, outputTokens: 30 };
+        yield { type: 'done', stopReason: 'end' };
+      }
+      return;
+    }
+    if (userText.includes('[[mock:m15-task]]') && !hasToolResult) {
+      yield { type: 'thinking_delta', text: '（mock）派生可写子代理…' };
+      yield {
+        type: 'tool_use',
+        call: { type: 'tool_use', id: 'mock-task-m15', name: 'task', input: { mode: 'write', description: 'M15 审批透传演示', prompt: '[[mock:m15-sub]] 创建 m15-note.txt' } },
+      };
+      yield { type: 'usage', inputTokens: 100, outputTokens: 20 };
+      yield { type: 'done', stopReason: 'tool_use' };
+      return;
+    }
     if (!hasToolResult) {
       yield { type: 'thinking_delta', text: '（mock）先看看工作区结构…' };
       yield { type: 'text_delta', text: '我先列一下工作区文件。' };
