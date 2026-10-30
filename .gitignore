@@ -15,6 +15,8 @@ apps/server/dist-sea/
 apps/desktop/src-tauri/binaries/
 # 本地密钥，永不入库
 .ai-secrets/
+# Python 工具链字节码（tools/*.py 的 __pycache__）
+__pycache__/
 # docker compose 的 Agent 工作区挂载点
 workspace/
 # 会话数据库（数据文件，不入库；.water/mcp.json 配置仍跟踪）
@@ -23,5 +25,5 @@ workspace/
 # npm pack 产物
 *.tgz
 
-# ���Ը����ʱ��棨vitest ���
+# ���Ը����ʱ��棨vitest ���
 coverage/

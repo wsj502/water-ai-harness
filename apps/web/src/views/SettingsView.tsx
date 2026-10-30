@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type PermissionRuleInfo, type ServerConfig } from '../api';
+import { api, type KeyStatus, type PermissionRuleInfo, type ServerConfig } from '../api';
 
 type Theme = 'system' | 'light' | 'dark';
 
@@ -30,11 +30,45 @@ export function SettingsView() {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [rules, setRules] = useState<PermissionRuleInfo[]>([]);
   const [theme, setTheme] = useState<Theme>(getTheme());
+  // BYOK（#67）：key 状态与录入表单
+  const [keys, setKeys] = useState<KeyStatus[]>([]);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [keyMsg, setKeyMsg] = useState<string | null>(null);
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => {});
     api.permissions().then(p => setRules(p.rules)).catch(() => {});
+    api.listKeys().then(setKeys).catch(() => {});
   }, []);
+
+  const refreshKeys = () => {
+    api.listKeys().then(setKeys).catch(() => {});
+  };
+
+  const saveKey = async (envName: string) => {
+    const value = (draft[envName] ?? '').trim();
+    if (!value) return;
+    setKeyMsg(null);
+    try {
+      const r = await api.setKey(envName, value);
+      setKeyMsg(`已录入 ${envName}（${r.hint}）——只存服务端内存，重启后需重新录入`);
+      setDraft(d => ({ ...d, [envName]: '' }));
+      refreshKeys();
+    } catch (e) {
+      setKeyMsg(`录入失败：${String(e)}`);
+    }
+  };
+
+  const removeKey = async (envName: string) => {
+    setKeyMsg(null);
+    try {
+      await api.deleteKey(envName);
+      setKeyMsg(`已清除 ${envName}`);
+      refreshKeys();
+    } catch (e) {
+      setKeyMsg(`清除失败：${String(e)}`);
+    }
+  };
 
   const changeTheme = (t: Theme) => { setTheme(t); applyTheme(t); };
 
@@ -58,6 +92,46 @@ export function SettingsView() {
             </div>
           </div>
           <div className="row"><div className="lab">工作区</div><div className="ctl">{config?.workspace ?? '…'}</div></div>
+        </fieldset>
+
+        <fieldset className="fieldset">
+          <legend>API 密钥（BYOK · #67）</legend>
+          <div className="row" style={{ display: 'block' }}>
+            <div className="lab" style={{ marginBottom: 8 }}>
+              按模型注册表录入<small>key 只存服务端内存（重启即清），只发往注册表声明的端点——baseUrl 不可从前端指定（防外泄）</small>
+            </div>
+            <div className="rule-table">
+              <div className="rule-row rule-head">
+                <span>环境变量名</span><span>状态</span><span>录入 / 清除</span><span></span>
+              </div>
+              {keys.map(k => (
+                <div className="rule-row" key={k.apiKeyEnv}>
+                  <span><code>{k.apiKeyEnv}</code></span>
+                  <span>{k.source === 'byok'
+                    ? <span className="badge ok">已录入（{k.hint}）</span>
+                    : k.source === 'env'
+                      ? <span className="badge run">环境变量（{k.hint}）</span>
+                      : <span className="badge deny">未配置</span>}</span>
+                  <span>
+                    <input
+                      className="input"
+                      type="password"
+                      placeholder={k.source === 'none' ? '粘贴 key 后保存' : '更新为新的 key'}
+                      value={draft[k.apiKeyEnv] ?? ''}
+                      onChange={e => setDraft(d => ({ ...d, [k.apiKeyEnv]: e.target.value }))}
+                    />
+                  </span>
+                  <span>
+                    <button className="btn" disabled={!(draft[k.apiKeyEnv] ?? '').trim()} onClick={() => void saveKey(k.apiKeyEnv)}>保存</button>
+                    {k.source === 'byok' && <button className="btn danger" style={{ marginLeft: 6 }} onClick={() => void removeKey(k.apiKeyEnv)}>清除</button>}
+                  </span>
+                </div>
+              ))}
+              {keys.length === 0 && <div className="rule-row"><span className="txtdim">加载中…</span></div>}
+            </div>
+            {keyMsg && <p className="env-note" style={{ marginTop: 8 }}>{keyMsg}</p>}
+            <p className="txtdim" style={{ marginTop: 8 }}>保存后模型菜单的「缺凭据」模型即可用；环境变量来源（.env/DPAPI 注入）不可在此清除。</p>
+          </div>
         </fieldset>
 
         <fieldset className="fieldset">

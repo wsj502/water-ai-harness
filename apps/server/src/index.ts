@@ -34,12 +34,20 @@ import { loadWorkspaces, type WorkspaceInfo } from './workspaces.js';
 const cfg = resolveConfig({});
 const mock = process.env.WATER_MOCK === '1';
 if (!mock && !cfg.apiKey) {
-  console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure 启动，或 WATER_MOCK=1 离线模式。`);
-  process.exit(1);
+  // BYOK（#67）：无环境凭据不再拒绝启动——Web 设置页可录入（存内存）；真实调用前仍会被 acquire 拦下
+  console.warn(`⚠ 未检测到 ${cfg.apiKeyEnv}。服务照常启动：可在 Web「设置 → API 密钥」录入（BYOK），或配置环境变量 / WATER_MOCK=1 后重启。`);
 }
 
-/** 凭据读取通道：start-secure 注入的环境变量（名字来自注册表，值永不出服务端） */
-const apiKeyOf = (envName: string): string | null => process.env[envName] ?? null;
+/**
+ * BYOK 凭据库（#67）：Web 端录入的 API Key，只存进程内存——
+ * 永不落盘、永不进日志、重启即清（UI 明示）。优先级：BYOK > 进程环境变量。
+ * 红线不变：前端仍不能指定 baseUrl，key 只发往注册表内模型声明的端点。
+ */
+const byokKeys = new Map<string, string>();
+const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+
+/** 凭据读取通道：BYOK 内存 > 环境变量（start-secure 注入 / .env+compose）。值永不出服务端 */
+const apiKeyOf = (envName: string): string | null => byokKeys.get(envName) ?? process.env[envName] ?? null;
 
 /**
  * M1 模型注册表：内置模型 + ~/.water/config.json models[] 自定义模型。
@@ -158,8 +166,9 @@ function sessionRuntime(s: Session): SessionRuntime {
     return { error: `未知模型 ${s.model}（自定义模型可能已被移除），请在模型菜单重选` };
   }
   // 兼容路径：默认模型不在注册表（老配置只写了 baseUrl/model、没写 models[]）→ 按启动配置手工构造
-  if (!cfg.apiKey) return { error: `缺少凭据 ${cfg.apiKeyEnv}` };
-  return { protocol: cfg.protocol, model: cfg.model, provider: createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey }) };
+  // BYOK（#67）：凭据判定统一走 apiKeyOf（BYOK > env）
+  if (apiKeyOf(cfg.apiKeyEnv) === null) return { error: `缺少凭据 ${cfg.apiKeyEnv}` };
+  return { protocol: cfg.protocol, model: cfg.model, provider: createProvider({ protocol: cfg.protocol, baseUrl: cfg.baseUrl, apiKey: apiKeyOf(cfg.apiKeyEnv)! }) };
 }
 
 const store = new SessionStore(new SessionPersistence(cfg.cwd));
@@ -188,8 +197,8 @@ app.get('/api/config', c => c.json({
   version: '0.7.0',
   // M16：跨会话并发上限（会话间并行、超限跨会话排队）
   maxParallelSessions: MAX_PARALLEL_SESSIONS,
-  // 只暴露「有没有」，永不暴露 key 本身
-  hasKey: mock || Boolean(cfg.apiKey),
+  // 只暴露「有没有」，永不暴露 key 本身（BYOK 后默认模型凭据就绪也计入）
+  hasKey: mock || apiKeyOf(cfg.apiKeyEnv) !== null,
   apiKeyEnv: cfg.apiKeyEnv,
 }));
 
@@ -205,6 +214,50 @@ app.get('/api/models', c => c.json({
   default: { protocol: cfg.protocol, model: cfg.model },
   mock,
 }));
+
+/**
+ * BYOK（#67）：Web 端安全录入 API Key。收 key 不收 baseUrl（M1 定案不回退）——
+ * key 只进内存，只发往注册表内模型声明的端点；任何响应只回显尾 4 位，永不回显完整值。
+ */
+app.get('/api/keys', c => c.json({
+  keys: registry.list().map(m => m.apiKeyEnv ?? PROTOCOL_DEFAULTS[m.protocol].apiKeyEnv)
+    .filter((v, i, a) => a.indexOf(v) === i) // 注册表出现的 env 名去重
+    .map(name => {
+      const byok = byokKeys.get(name) ?? null;
+      const env = process.env[name] ?? null;
+      const value = byok ?? env;
+      return {
+        apiKeyEnv: name,
+        source: byok !== null ? 'byok' as const : env !== null ? 'env' as const : 'none' as const,
+        // 尾 4 位提示（业界惯例：可确认「是不是那把 key」又不暴露主体）
+        hint: value !== null && value.length >= 8 ? `…${value.slice(-4)}` : null,
+      };
+    }),
+  note: 'BYOK key 只存服务端内存，重启后需重新录入；环境变量来源不可在此清除',
+}));
+
+app.post('/api/keys', async c => {
+  const body = await c.req.json().catch(() => null) as { apiKeyEnv?: unknown; value?: unknown } | null;
+  const name = typeof body?.apiKeyEnv === 'string' ? body.apiKeyEnv : '';
+  const value = typeof body?.value === 'string' ? body.value : '';
+  if (!ENV_NAME.test(name)) return c.json({ error: `apiKeyEnv 必须是合法环境变量名（大写字母/数字/下划线），不是 key 本身` }, 400);
+  if (!value.trim() || value.length < 8) return c.json({ error: 'value 必须是不少于 8 字符的 key 值' }, 400);
+  byokKeys.set(name, value);
+  registry.invalidate(); // 缓存实例持旧 key，必须重建
+  console.log(`[byok] 已录入 ${name}（尾4位 ${value.slice(-4)}）——值不落盘不进日志`);
+  return c.json({ ok: true, apiKeyEnv: name, hint: `…${value.slice(-4)}` });
+});
+
+app.delete('/api/keys/:name', c => {
+  const name = c.req.param('name');
+  if (!byokKeys.has(name)) {
+    return c.json({ error: `${name} 不是 BYOK 录入的 key（环境变量来源请在服务端侧移除）` }, 404);
+  }
+  byokKeys.delete(name);
+  registry.invalidate();
+  console.log(`[byok] 已清除 ${name}`);
+  return c.json({ ok: true });
+});
 
 /**
  * M7B 工作区清单：注册表白名单（id/name/path/default）。

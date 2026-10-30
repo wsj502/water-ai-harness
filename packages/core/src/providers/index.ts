@@ -54,6 +54,12 @@ export class ProviderRegistry {
     return this.byId.get(id.toLowerCase());
   }
 
+  /**
+   * BYOK（#67）：清空实例缓存。缓存键 (protocol|baseUrl|apiKeyEnv) 不含 key 值——
+   * 运行期凭据变化（Web 端录入/清除 key）后必须失效，否则继续用旧 key 的实例。
+   */
+  invalidate(): void { this.cache.clear(); }
+
   /** 取（或建）模型对应的 Provider；凭据缺失时返回带指引的错误 */
   acquire(info: ModelInfo): AcquireResult {
     const baseUrl = info.baseUrl ?? this.env.baseUrlOf(info.protocol);

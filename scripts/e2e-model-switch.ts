@@ -627,6 +627,83 @@ async function main(): Promise<void> {
     ok(seenHttp.some(x => x.q === 'hello-m17' && x.auth === 'Bearer e2e-demo-token'),
       'M22 $env: 凭据插值到达服务端（token 只存在于服务端环境，不入 config/事件流）');
 
+    // ---- 17. BYOK：Web 端安全录入 API Key（#67：收 key 不收 baseUrl）----
+    // 主 server 是 mock（hasKey 恒真，测不出动态性）——起第二个「无凭据非 mock」server：
+    // 验证无 key 也能启动（BYOK 留口）+ hasKey 动态翻转 + 任何响应永不回显完整 key 值
+    {
+      const PORT2 = 3218;
+      const BASE2 = `http://127.0.0.1:${PORT2}`;
+      const wd3 = mkdtempSync(path.join(tmpdir(), 'water-e2e3-'));
+      const env2: NodeJS.ProcessEnv = { ...process.env };
+      delete env2.WATER_MOCK; delete env2.ZHIPU_API_KEY;
+      delete env2.DEEPSEEK_API_KEY; delete env2.WATER_API_KEY_ENV;
+      env2.WATER_PORT = String(PORT2);
+      const child2 = spawn(process.execPath, [SERVER], {
+        env: env2, cwd: wd3, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      });
+      child2.stdout.on('data', () => { /* 吞掉启动日志 */ });
+      child2.stderr.on('data', () => { /* BYOK 启动警告为预期行为 */ });
+      try {
+        let ready2 = false;
+        for (let i = 0; i < 50; i++) {
+          try { const r = await fetch(`${BASE2}/api/config`); if (r.ok) { ready2 = true; break; } } catch { /* 未就绪 */ }
+          await new Promise(r => setTimeout(r, 200));
+        }
+        ok(ready2, 'BYOK 无凭据可启动（行为变更：不再拒绝，等 Web 录入）');
+        if (ready2) {
+          const cfg0 = await jfetch<{ hasKey: boolean }>(`${BASE2}/api/config`);
+          ok(cfg0.body.hasKey === false, 'BYOK 初始：/api/config hasKey=false');
+          const m0 = await jfetch<{ models: Array<{ id: string; hasKey: boolean }> }>(`${BASE2}/api/models`);
+          ok(m0.body.models.every(m => !m.hasKey), 'BYOK 初始：全部模型缺凭据（非 mock 真实判定）');
+          const k0 = await jfetch<{ keys: Array<{ apiKeyEnv: string; source: string }> }>(`${BASE2}/api/keys`);
+          ok(k0.body.keys.some(k => k.apiKeyEnv === 'ZHIPU_API_KEY' && k.source === 'none')
+            && k0.body.keys.some(k => k.apiKeyEnv === 'DEEPSEEK_API_KEY' && k.source === 'none'),
+            'BYOK /api/keys 列出注册表出现的 env 名（去重）');
+
+          const FAKE = 'e2e-fake-dsk-987654321'; // 形状合法的假 key（非真实凭据）
+          const set1 = await jfetch<{ ok: boolean; hint: string }>(`${BASE2}/api/keys`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ apiKeyEnv: 'DEEPSEEK_API_KEY', value: FAKE }),
+          });
+          ok(set1.status === 200 && set1.body.ok && set1.body.hint === '…4321', 'BYOK 录入成功，只回显尾4位');
+          const m1 = await jfetch<{ models: Array<{ id: string; hasKey: boolean }> }>(`${BASE2}/api/models`);
+          ok(m1.body.models.find(m => m.id === 'deepseek-chat')?.hasKey === true, 'BYOK 后 deepseek-chat hasKey 动态翻转');
+          ok(m1.body.models.find(m => m.id === 'glm-4.6')?.hasKey === false, 'BYOK 不串扰其他 env（glm-4.6 仍缺）');
+          const k1 = await jfetch<{ keys: Array<{ apiKeyEnv: string; source: string; hint: string | null }> }>(`${BASE2}/api/keys`);
+          const dsk = k1.body.keys.find(k => k.apiKeyEnv === 'DEEPSEEK_API_KEY');
+          ok(dsk?.source === 'byok' && dsk?.hint === '…4321', 'BYOK /api/keys 来源 byok + 尾4位提示');
+          ok(!JSON.stringify(k1.body).includes(FAKE) && !JSON.stringify(m1.body).includes(FAKE),
+            'BYOK 任何响应不含完整 key 值');
+
+          const bad1 = await jfetch<{ error?: string }>(`${BASE2}/api/keys`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ apiKeyEnv: 'deepseek-key', value: FAKE }),
+          });
+          ok(bad1.status === 400, 'BYOK 拒绝非法 env 名（小写，防把 key 值当名字存）');
+          const bad2 = await jfetch<{ error?: string }>(`${BASE2}/api/keys`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ apiKeyEnv: 'DEEPSEEK_API_KEY', value: 'short' }),
+          });
+          ok(bad2.status === 400, 'BYOK 拒绝过短 value');
+
+          const del1 = await jfetch<{ ok: boolean }>(`${BASE2}/api/keys/DEEPSEEK_API_KEY`, { method: 'DELETE' });
+          ok(del1.status === 200 && del1.body.ok, 'BYOK 清除成功');
+          const m2 = await jfetch<{ models: Array<{ id: string; hasKey: boolean }> }>(`${BASE2}/api/models`);
+          ok(m2.body.models.find(m => m.id === 'deepseek-chat')?.hasKey === false, 'BYOK 清除后 hasKey 回落');
+          const del2 = await jfetch<{ error?: string }>(`${BASE2}/api/keys/DEEPSEEK_API_KEY`, { method: 'DELETE' });
+          ok(del2.status === 404, 'BYOK 重复清除 404（env 来源不可在此清）');
+        }
+      } finally {
+        child2.kill();
+        await Promise.race([
+          new Promise<void>(res => child2.once('exit', res)),
+          new Promise<void>(res => setTimeout(res, 3000)),
+        ]);
+        try { rmSync(wd3, { recursive: true, force: true }); }
+        catch { /* 清理失败不影响结果：留在 %TEMP% 由系统回收 */ }
+      }
+    }
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）

@@ -138,6 +138,13 @@ export interface PermissionRuleInfo {
   policy: string;
 }
 
+/** BYOK（#67）：key 状态行（GET /api/keys）——只含来源与尾4位，永不回显完整值 */
+export interface KeyStatus {
+  apiKeyEnv: string;
+  source: 'byok' | 'env' | 'none';
+  hint: string | null;
+}
+
 export interface FileNode {
   name: string;
   path: string;
@@ -175,6 +182,22 @@ export const api = {
 
   permissions: () =>
     fetch(`${BASE}/api/permissions`).then(r => json<{ autoAllowLowRisk: boolean; rules: PermissionRuleInfo[] }>(r)),
+
+  /** BYOK（#67）：key 状态清单（尾4位提示） */
+  listKeys: () =>
+    fetch(`${BASE}/api/keys`).then(r => json<{ keys: KeyStatus[]; note: string }>(r)).then(j => j.keys),
+
+  /** BYOK（#67）：录入 key（存服务端内存，重启即清；baseUrl 白名单不受影响） */
+  setKey: (apiKeyEnv: string, value: string) =>
+    fetch(`${BASE}/api/keys`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKeyEnv, value }),
+    }).then(r => json<{ ok: boolean; apiKeyEnv: string; hint: string }>(r)),
+
+  /** BYOK（#67）：清除录入的 key（环境变量来源不可在此清除） */
+  deleteKey: (apiKeyEnv: string) =>
+    fetch(`${BASE}/api/keys/${encodeURIComponent(apiKeyEnv)}`, { method: 'DELETE' }).then(r => json<{ ok: boolean }>(r)),
 
   fileTree: (workspaceId?: string) =>
     fetch(`${BASE}/api/files/tree${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`)
