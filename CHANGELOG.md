@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### 新增（M22 · HTTP 型配置工具）
+
+- config 工具条目新增 `kind: 'prompt' | 'http'`（缺省 prompt，向后兼容）——M17 定案时暂缓的出网能力落地，「配置即插件」补全另一半
+- http 形状 `{ url, method?, headers?, body? }`：`$参数` 与 `$env:变量名` **单遍插值**（正则合一，替换结果不二次解释）；凭据值只来自进程环境（DPAPI 注入链路天然兼容），**永不入 config、不 echo 进错误信息**
+- **域名白名单（防 SSRF）**：顶层 `allowedHttpHosts: string[]`；http 工具 url host 不在白名单（或未配置白名单）启动即拒——绝不裸放行
+- 边界：method 白名单（GET/POST/PUT/DELETE/PATCH）、超时 10s（参数化）、响应截断 64KB、url 必须是合法绝对 http(s)
+- **风险级 high + riskFor 恒 high**：出网是可观测副作用，逐次审批
+- vitest 7 用例（解析 4：合法/白名单红线/形状矩阵/缺省契约；执行 3：双插值+header 透传+响应回填 / $env 未设报错+截断 / 超时——本地 node:http fixture）；E2E 第 16 节：mock HTTP server 全链路（high 审批经审批桥 → $text 出网 → 响应回填 → $env 凭据到达服务端）
+
 ### 新增（M21 · 子级授权继承）
 
 - 子级 write/edit 的「session」授权按文件粒度**上浮**父会话引擎（`write:<路径>`），后续子代理构造时**继承**——同会话重复派生写同一文件不再二次打扰（v0.5.0 已知限制③收口）

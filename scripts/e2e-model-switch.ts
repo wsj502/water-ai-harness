@@ -14,6 +14,7 @@
  */
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -81,11 +82,23 @@ async function main(): Promise<void> {
   // 独立临时工作区：测试会话/数据库不污染开发目录；第二个目录用于 M7B 多工作区验证
   const workdir = mkdtempSync(path.join(tmpdir(), 'water-e2e-'));
   const workdir2 = mkdtempSync(path.join(tmpdir(), 'water-e2e2-'));
+  // M22：本地 mock HTTP server（echo 接口）——http 型配置工具的出网目标
+  const seenHttp: Array<{ q: string | null; auth: string | null }> = [];
+  const mockHttp = createServer((req, res) => {
+    const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+    seenHttp.push({ q: u.searchParams.get('q'), auth: req.headers.authorization ?? null });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ echo: u.searchParams.get('q'), ok: true }));
+  });
+  await new Promise<void>(r => mockHttp.listen(0, '127.0.0.1', () => r()));
+  const mockHttpPort = (mockHttp.address() as { port: number }).port;
   // M13：配置式命令——测试注入的临时 config.json（含展开验证用模板）
   // M17：配置式声明工具（prompt 型）——seal 工具，E2E 第 14 节实证「声明→注册→调用→模板回填」
+  // M22：http 型配置工具——ping-api，出网到上方 mock server（白名单 127.0.0.1 + $env: 凭据插值）
   const cfgFile = path.join(workdir, 'test-config.json');
   writeFileSync(cfgFile, JSON.stringify({
     commands: [{ name: 'say', template: '请原样输出以下内容：[$ARGUMENTS]', description: '回显命令' }],
+    allowedHttpHosts: ['127.0.0.1'],
     tools: [{
       name: 'seal',
       description: '给文本盖章（M17 演示）',
@@ -95,6 +108,19 @@ async function main(): Promise<void> {
         properties: { text: { type: 'string', description: '要盖章的文本' } },
         required: ['text'],
       },
+    }, {
+      name: 'ping-api',
+      kind: 'http',
+      description: '查询演示接口（M22）',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: '查询词' } },
+        required: ['text'],
+      },
+      http: {
+        url: `http://127.0.0.1:${mockHttpPort}/echo?q=$text`,
+        headers: { Authorization: 'Bearer $env:WATER_M22_E2E_KEY' },
+      },
     }],
   }), 'utf8');
   const child = spawn(process.execPath, [SERVER], {
@@ -102,6 +128,7 @@ async function main(): Promise<void> {
       ...process.env, WATER_MOCK: '1', WATER_PORT: String(PORT),
       WATER_WORKSPACES: workdir2, WATER_CONFIG_FILE: cfgFile,
       WATER_MAX_PARALLEL_SESSIONS: '2',
+      WATER_M22_E2E_KEY: 'e2e-demo-token', // 演示用假 token（$env: 插值链路的验证载体，非真实凭据）
     },
     cwd: workdir,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -583,6 +610,23 @@ async function main(): Promise<void> {
     const list19 = await jfetch<{ sessions: Array<{ id: string; busy: boolean }> }>(`${BASE}/api/sessions`);
     ok(list19.body.sessions.find(x => x.id === sid19)?.busy === false, 'M19 结束后会话解除 busy（宽限定时器清理）');
 
+    // ---- 16. HTTP 型配置工具（M22：白名单 + $env: 凭据插值 + high 审批 + 出网回填）----
+    const perms22 = await jfetch<{ rules: Array<{ tool: string; risk: string }> }>(`${BASE}/api/permissions`);
+    ok(perms22.body.rules.some(r => r.tool === 'ping-api' && r.risk === 'high'),
+      'M22 /api/permissions 含 ping-api（high：出网逐次审批）');
+    const pl22 = await jfetch<{ configTools: Array<{ name: string; kind: string }> }>(`${BASE}/api/plugins`);
+    ok(pl22.body.configTools?.some(t => t.name === 'ping-api' && t.kind === 'http'),
+      'M22 /api/plugins 列出 ping-api（kind=http）');
+    const sid22 = await mkSession();
+    const ev22 = await streamWithApprovals(sid22, '[[mock:m17tool:ping-api]] 调用 http 工具', 'once');
+    const res22 = ev22.find(e => e.type === 'tool_result'
+      && (e.call as Record<string, unknown> | undefined)?.name === 'ping-api') as { result?: string; isError?: boolean } | undefined;
+    ok(Boolean(res22) && res22!.result!.includes('HTTP 200') && res22!.result!.includes('"echo":"hello-m17"'),
+      'M22 http 型执行：$text 插值出网、mock server 响应回填');
+    ok(res22?.isError === false && ev22.at(-1)?.type === 'finish', 'M22 场景正常完成（high 审批经审批桥放行）');
+    ok(seenHttp.some(x => x.q === 'hello-m17' && x.auth === 'Bearer e2e-demo-token'),
+      'M22 $env: 凭据插值到达服务端（token 只存在于服务端环境，不入 config/事件流）');
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）
@@ -591,6 +635,7 @@ async function main(): Promise<void> {
       new Promise<void>(res => child.once('exit', res)),
       new Promise<void>(res => setTimeout(res, 3000)),
     ]);
+    mockHttp.close();
     try { rmSync(workdir, { recursive: true, force: true }); }
     catch { /* 清理失败不影响结果：留在 %TEMP% 由系统回收 */ }
     try { rmSync(workdir2, { recursive: true, force: true }); }

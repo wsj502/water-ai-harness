@@ -5,7 +5,7 @@ import { api, type PluginInfo } from '../api';
 export function PluginsView() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [configCommands, setConfigCommands] = useState<Array<{ name: string; description?: string }>>([]);
-  const [configTools, setConfigTools] = useState<Array<{ name: string; description: string; hasParameters: boolean }>>([]);
+  const [configTools, setConfigTools] = useState<Array<{ name: string; kind: 'prompt' | 'http'; description: string; hasParameters: boolean }>>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,13 +65,13 @@ export function PluginsView() {
               <div className="pico">🔧</div>
               <div className="pname">配置式工具<span className="at">~/.water/config.json</span></div>
             </div>
-            <div className="pdesc">配置即插件进阶（M17）：声明 JSON Schema 的工具直接进注册表——prompt 型执行（模板 $参数 替换），模型可自主调用</div>
+            <div className="pdesc">配置即插件进阶（M17/M22）：声明 JSON Schema 的工具直接进注册表——prompt 型（模板 $参数 替换）/ http 型（域名白名单 + $env: 凭据插值，逐次审批）</div>
             <div className="pmeta">
               {configTools.map(t => (
-                <span key={t.name} title={t.description}>{t.name}{t.hasParameters ? '()' : ''}</span>
+                <span key={t.name} title={t.description}>{t.name}{t.kind === 'http' ? ' 🌐' : ''}{t.hasParameters ? '()' : ''}</span>
               ))}
             </div>
-            <div className="foot"><div className="perms"><span className="perm safe">零执行逻辑</span></div></div>
+            <div className="foot"><div className="perms"><span className="perm safe">{configTools.every(t => t.kind !== 'http') ? '零执行逻辑' : 'http 受白名单约束'}</span></div></div>
           </div>
         )}
         {plugins.length === 0 && configCommands.length === 0 && configTools.length === 0 && !error && (
