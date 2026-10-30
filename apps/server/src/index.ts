@@ -433,11 +433,12 @@ app.post('/api/sessions/:id/messages', async c => {
   const ws = findWorkspace(s.workspaceId);
   const wsSystem = SYSTEM_BY_WS.get(ws.id)!.system;
 
-  // M2：上下文预算（强制 env > 模型窗口 × 0.8）
+  // M2：上下文预算（强制 env > 模型窗口 × 0.8）；M9：摘要压缩开关（mock 与显式关闭时禁用）
   const forced = Number(process.env.WATER_MAX_CONTEXT_TOKENS) || 0;
   const budget = forced > 0 ? forced
     : rt.contextWindow ? Math.floor(rt.contextWindow * 0.8)
     : undefined;
+  const compactSummarize = !mock && process.env.WATER_COMPACT_SUMMARY !== '0';
 
   s.busy = true;
   s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
@@ -474,6 +475,7 @@ app.post('/api/sessions/:id/messages', async c => {
       for await (const ev of agentLoop({
         provider: rt.provider, model: rt.model, system: wsSystem, messages: s.messages,
         ...(budget !== undefined ? { maxContextTokens: budget } : {}),
+        ...(compactSummarize ? { compactSummarize: true } : {}),
         tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
         toolCtx: { cwd: ws.path }, approve,
         maxTurns: 20, signal: ac.signal,
