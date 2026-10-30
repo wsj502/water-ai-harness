@@ -13,9 +13,7 @@ import type {
 import { compactMessages } from './context.js';
 import { PermissionEngine } from './permissions.js';
 import type { Tool, ToolContext } from './tools/index.js';
-import type { PluginHooks } from './plugin/types.js';
-
-export interface AgentLoopOptions {
+import type { PluginHooks } from './plugin/types.js';export interface AgentLoopOptions {
   provider: Provider;
   model: string;
   system: string;
@@ -34,6 +32,37 @@ export interface AgentLoopOptions {
   signal?: AbortSignal;
 }
 
+const SUB_AGENT_SYSTEM = [
+  '你是 Water 的只读研究子代理。收到一个自包含的研究问题，用工具（read/grep/glob）收集信息，',
+  '然后给出简洁、信息密集的结论。你不能修改文件，不能执行命令，也不能询问用户——独立完成。',
+].join('\n');
+
+/**
+ * M8：运行一次只读研究子代理（嵌套 Agent Loop）。
+ * 防递归双重保险：工具集过滤掉 task + 嵌套 ctx 不注入 spawnTask（用原始 opts.toolCtx）。
+ * 中断传播：共享父级 AbortSignal。返回最后一条 assistant 文本。
+ */
+function runSubAgent(opts: AgentLoopOptions, prompt: string): Promise<string> {
+  return (async () => {
+    const subMessages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: prompt }] }];
+    const subTools = opts.tools.filter(t => t.risk === 'low' && t.spec.name !== 'task');
+    try {
+      for await (const _ev of agentLoop({
+        provider: opts.provider, model: opts.model,
+        system: SUB_AGENT_SYSTEM, messages: subMessages, tools: subTools,
+        permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        toolCtx: opts.toolCtx, // 原始 ctx（无 spawnTask）
+        maxTurns: 10, ...(opts.signal ? { signal: opts.signal } : {}),
+      })) { /* 子代理事件不透传（M8 界定；流式子代理块留作后续） */ }
+    } catch { /* 中断/异常：返回已收集内容 */ }
+    const last = [...subMessages].reverse().find(m => m.role === 'assistant');
+    const text = last?.parts
+      .filter((p): p is Extract<Part, { type: 'text' }> => p.type === 'text')
+      .map(p => p.text).join('\n').trim();
+    return text || '（子代理未产出文本结论）';
+  })();
+}
+
 export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEvent> {
   const maxTurns = opts.maxTurns ?? 20;
   const { provider, permissions } = opts;
@@ -43,6 +72,9 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
   if (!opts.messages.some(m => m.role === 'system')) {
     opts.messages.unshift({ role: 'system', parts: [{ type: 'text', text: opts.system }] });
   }
+
+  // M8：工具执行上下文注入子代理派生器（嵌套循环用上面的原始 opts.toolCtx → 天然防递归）
+  const execCtx: ToolContext = { ...opts.toolCtx, spawnTask: (prompt: string) => runSubAgent(opts, prompt) };
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
@@ -183,7 +215,7 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
       const started = Date.now();
       try {
-        const result = await tool.run(call.input, opts.toolCtx);
+        const result = await tool.run(call.input, execCtx);
         const durationMs = Date.now() - started;
         for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, true, durationMs); } catch { /* 忽略 */ } }
         yield { type: 'tool_result', call, result, isError: false, durationMs };

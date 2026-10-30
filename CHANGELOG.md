@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### 新增（M8 · 只读研究子代理）
+
+- 新内置工具 `task`：派生子代理处理「先调研再回答」类子任务——`{prompt, description?}`，自包含研究问题
+- 内核实现（依赖注入，零新顶层概念）：`ToolContext.spawnTask` 可选注入；`loop.ts` 构造**嵌套 agentLoop**——工具集 = 低风险只读（read/grep/glob）且**过滤 task 自身**；嵌套 ctx 不注入 spawnTask（双重防递归）；共享父级 AbortSignal（中断传播）；maxTurns 10
+- 风险级 `medium`：不碰文件但每次派生是一整段子对话的 token 成本（审批放行 / 本会话总是允许）
+- Web 工具卡 🤖 图标 + description/prompt 摘要
+- vitest 4 用例（派生→真跑 glob→结论回填 / 防递归断言 / 无 spawnTask 明确报错 / 中断传播）；E2E 41 断言（task 在权限清单）
+- 测试彩蛋：内核的保守拒绝（无审批渠道 medium→deny）先让测试红了——**行为正确，测试需要提供审批**
+
 ### 新增（M7B · 工作区注册表）
 
 - **多根管理**：`~/.water/workspaces.json`（用户级注册表，红线扫描拒绝凭据字段）+ `WATER_WORKSPACES` 环境变量（开发/CI）+ 启动目录 `default`（永在、不可删、不可伪装）；id 归一化小写（Windows 路径大小写不敏感）
