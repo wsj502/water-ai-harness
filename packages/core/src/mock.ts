@@ -1,14 +1,19 @@
 /**
  * MockProvider：离线开发/测试用。不配 key 时 Web/Server 也能完整走通链路。
  * 行为：第一轮固定请求 glob，第二轮根据工具结果给结论。
+ * 每轮带 ~150ms「网络节奏」：离线体验贴近真实，且并发/排队行为可被测试
+ * （无延迟时执行快于请求到达抖动，排队永不触发）。
  * 启用方式：WATER_MOCK=1
  */
 import type { ChatRequest, Provider, StreamEvent } from './types.js';
+
+const RTT = Number(process.env.WATER_MOCK_RTT_MS ?? 150);
 
 export class MockProvider implements Provider {
   readonly protocol = 'openai' as const;
 
   async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+    await new Promise(r => setTimeout(r, RTT));
     const hasToolResult = req.messages.some(m => m.role === 'tool');
     if (!hasToolResult) {
       yield { type: 'thinking_delta', text: '（mock）先看看工作区结构…' };

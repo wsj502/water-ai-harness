@@ -29,6 +29,8 @@ export interface SessionMeta {
   tokensOut: number;
   busy: boolean;
   pendingApprovals: number;
+  /** M14：排队中的消息数（不含正在执行的） */
+  queued?: number;
   /** 会话级覆盖（null/缺省 = 跟随服务端默认） */
   protocol?: string | null;
   model?: string | null;
@@ -73,7 +75,13 @@ export interface ApprovalRequiredEvent {
   call: { id: string; name: string; input: Record<string, unknown> };
 }
 
-export type ServerEvent = LoopEvent | ApprovalRequiredEvent;
+/** M14：排队状态事件（瞬时，不进回放缓冲） */
+export interface QueuedEvent {
+  type: 'queued';
+  position: number;
+}
+
+export type ServerEvent = LoopEvent | ApprovalRequiredEvent | QueuedEvent;
 
 async function json<T>(resp: Response): Promise<T> {
   if (!resp.ok) {

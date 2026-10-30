@@ -459,6 +459,7 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
               <span>{s.turns} 轮</span>
               {(s.tokensIn + s.tokensOut) > 0 && <span className="tok">{fmtTok(s.tokensIn + s.tokensOut)} tok</span>}
               {s.busy && <span className="tok">进行中</span>}
+              {!s.busy && (s.queued ?? 0) > 0 && <span className="tok">排队 {s.queued}</span>}
               {!s.busy && s.pendingApprovals > 0 && <span className="tok">⏳ 待审批</span>}
               {s.workspaceId && s.workspaceId !== 'default' && <span className="tok" title={`工作区 ${s.workspaceId}`}>🗂 {s.workspaceId}</span>}
             </div>

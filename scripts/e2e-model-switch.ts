@@ -261,6 +261,37 @@ async function main(): Promise<void> {
     const firstText = firstUser?.parts.find(p => p.type === 'text')?.text ?? '';
     ok(firstText.includes('[$ARGUMENTS]') === false && firstText.includes('[你好世界]'), '$ARGUMENTS 已展开为用户参数（历史可证）');
 
+    // ---- 11. 消息排队（M14：并发按序 / queued 事件 / 深度上限）----
+    const sq = await jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const postMsg = (text: string) => ({
+      method: 'POST' as const,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    // 两条并发：第一条立即执行，第二条排队（position=1）后自动执行
+    const [r1, r2] = await Promise.all([
+      readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第一条消息')),
+      readSSE(`${BASE}/api/sessions/${sq.body.id}/messages`, postMsg('第二条消息')),
+    ]);
+    ok(r1.at(-1)?.type === 'finish' && r2.at(-1)?.type === 'finish', '并发两条均正常完成');
+    // 历史顺序 = 到达顺序（闸门串行保证）
+    const hq = await jfetch<{ messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> }>(`${BASE}/api/sessions/${sq.body.id}/messages`);
+    const userTexts = hq.body.messages.filter(m => m.role === 'user').map(m => m.parts.find(p => p.type === 'text')?.text ?? '');
+    ok(userTexts.indexOf('第一条消息') < userTexts.indexOf('第二条消息'), '消息按到达顺序串行入史');
+    // 第六条并发（已 1 执行 + 4 排队占满）→ 429
+    const burst = Array.from({ length: 6 }, (_, i) =>
+      fetch(`${BASE}/api/sessions/${sq.body.id}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: `burst-${i}` }),
+      }));
+    const burstResps = await Promise.all(burst);
+    const tooMany = burstResps.filter(r => r.status === 429);
+    ok(tooMany.length >= 1, `深度上限生效（${tooMany.length} 条被 429）`);
+    // 清理：等 burst 中成功入队的跑完，避免影响后续
+    await new Promise(r => setTimeout(r, 800));
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）

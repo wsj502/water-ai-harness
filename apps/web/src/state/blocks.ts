@@ -3,7 +3,7 @@
  * 纯函数，方便测试与复用。
  */
 import type { LoopEvent, ToolUsePart, WMessage } from '@water/core';
-import type { ApprovalRequiredEvent, ServerEvent } from '../api';
+import type { ApprovalRequiredEvent, QueuedEvent, ServerEvent } from '../api';
 
 export type ToolStatus = 'running' | 'waiting' | 'done' | 'error' | 'denied';
 
@@ -67,6 +67,13 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
         text: ev.method === 'summary'
           ? `🧠 上下文已摘要压缩：${ev.estBefore} → ${ev.estAfter} token（${ev.droppedMessages} 条旧消息总结为要点${ev.summaryTokens ? `，摘要成本 ${ev.summaryTokens} tok` : ''}）`
           : `🗜 上下文已压缩：${ev.estBefore} → ${ev.estAfter} token（丢弃 ${ev.droppedMessages} 条旧消息${ev.truncatedResults ? `，截断 ${ev.truncatedResults} 条工具结果` : ''}）`,
+        ts: Date.now(),
+      });
+      break;
+    case 'queued':
+      next.push({
+        kind: 'notice',
+        text: `⏳ 已排队（第 ${(ev as QueuedEvent).position} 位）——前一条处理完后自动执行`,
         ts: Date.now(),
       });
       break;

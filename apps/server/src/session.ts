@@ -62,6 +62,26 @@ export class Session {
   tokensOut = 0;
   /** 同一时刻只允许一条消息在跑（MVP 约束，避免历史交错） */
   busy = false;
+  /**
+   * M14 消息排队：promise 链闸门。新请求 await 前一个的 tail 后获得执行权，
+   * 天然按到达顺序串行；waiters 含正在执行者，上限由端点守卫。
+   */
+  private tail: Promise<void> = Promise.resolve();
+  waiters = 0;
+
+  /** 取号排队：返回（排队位置 0=立即执行，释放函数） */
+  enqueueTurn(): { position: number; wait: () => Promise<void>; release: () => void } {
+    const position = this.waiters;
+    this.waiters++;
+    const prev = this.tail;
+    let release!: () => void;
+    this.tail = new Promise<void>(r => { release = r; });
+    return {
+      position,
+      wait: () => prev,
+      release: () => { this.waiters--; release(); },
+    };
+  }
   /** M3：当前运行的事件回放缓冲（每条消息开始时重置；断线补帧/刷新接流用） */
   events: BufferedEvent[] = [];
   private seq = 0;
@@ -203,6 +223,7 @@ export class SessionStore {
         turns: s.messages.filter(m => m.role === 'user').length,
         tokensIn: s.tokensIn, tokensOut: s.tokensOut,
         busy: s.busy, pendingApprovals: s.pendingCount,
+        queued: Math.max(0, s.waiters - (s.busy ? 1 : 0)),
         protocol: s.protocol, model: s.model, archived: s.archived,
         workspaceId: s.workspaceId,
       }));
