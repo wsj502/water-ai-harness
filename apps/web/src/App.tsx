@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent } from './api';
+import { api, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent, type WorkspaceInfo } from './api';
 import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
 import { Md } from './Md';
 import { diffStats, lineDiff } from './diff';
@@ -38,6 +38,9 @@ export default function App() {
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   /** 侧栏会话过滤：false 最近会话 / true 归档（M7A） */
   const [archivedView, setArchivedView] = useState(false);
+  /** 工作区注册表 + 选中项（决定下一个新会话的绑定，M7B） */
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [pendingWs, setPendingWs] = useState('default');
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -48,6 +51,7 @@ export default function App() {
   useEffect(() => {
     api.config().then(setConfig).catch(e => setError(String(e)));
     api.models().then(m => { setModels(m.models); setMockMode(m.mock); }).catch(() => {});
+    api.workspaces().then(setWorkspaces).catch(() => {});
     refreshSessions(false);
     api.listPlugins().then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
   }, []);
@@ -102,7 +106,10 @@ export default function App() {
     try {
       let sid = activeId;
       if (!sid) {
-        const created = await api.createSession(pendingModel ? { model: pendingModel } : undefined);
+        const created = await api.createSession({
+          ...(pendingWs !== 'default' ? { workspaceId: pendingWs } : {}),
+          ...(pendingModel ? { model: pendingModel } : {}),
+        });
         sid = created.id;
         setActiveId(sid);
         setPendingModel(null);
@@ -235,6 +242,10 @@ export default function App() {
   const effProtocol = activeMeta?.protocol ?? (pendingModel ? models.find(m => m.id === pendingModel)?.protocol : undefined) ?? config?.protocol ?? '';
   const sessionOverridden = activeMeta != null && (activeMeta.model != null || activeMeta.protocol != null);
 
+  /** 生效工作区：激活会话的绑定 > 侧栏选中（决定新会话/工作区页的根） */
+  const effWsId = activeMeta?.workspaceId ?? pendingWs;
+  const effWsName = workspaces.find(w => w.id === effWsId)?.name ?? effWsId;
+
   return (
     <div className="app">
       <Topbar config={config} sessionTitle={view === 'chat' ? activeTitle : null} view={view}
@@ -244,7 +255,9 @@ export default function App() {
       <Sidebar sessions={sessions} activeId={activeId} view={view} config={config}
         onOpen={openSession} onNew={newSession} onNav={setView}
         archivedView={archivedView} onFilter={switchFilter}
-        onArchive={toggleArchive} onDelete={removeSession} />
+        onArchive={toggleArchive} onDelete={removeSession}
+        workspaces={workspaces} pendingWs={pendingWs} onPickWs={setPendingWs}
+        effWsId={effWsId} />
       {view === 'chat' && (
       <main className="main">
         <div className="chat-scroll" ref={scrollRef}>
@@ -271,7 +284,7 @@ export default function App() {
       )}
       {view === 'plugins' && <PluginsView />}
       {view === 'tasks' && <TasksView />}
-      {view === 'workspace' && <WorkspaceView onInject={injectRef} />}
+      {view === 'workspace' && <WorkspaceView onInject={injectRef} workspaceId={effWsId} />}
       {view === 'settings' && <SettingsView />}
       <footer className="statusbar">
         <span className="item"><span className="ok">●</span> provider: {config?.protocol ?? '…'}</span>
@@ -383,7 +396,7 @@ function ModelPill({ models, mockMode, current, showDefault, disabled, onPick }:
   );
 }
 
-function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archivedView, onFilter, onArchive, onDelete }: {
+function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archivedView, onFilter, onArchive, onDelete, workspaces, pendingWs, onPickWs, effWsId }: {
   sessions: SessionMeta[];
   activeId: string | null;
   view: View;
@@ -395,6 +408,10 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
   onFilter: (to: boolean) => void;
   onArchive: (s: SessionMeta) => void;
   onDelete: (s: SessionMeta) => void;
+  workspaces: WorkspaceInfo[];
+  pendingWs: string;
+  onPickWs: (id: string) => void;
+  effWsId: string;
 }) {
   const wsName = config?.workspace.split(/[\\/]/).filter(Boolean).pop() ?? '';
   return (
@@ -406,6 +423,16 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
           <div className="ver">v{config?.version ?? '…'} · web</div>
         </div>
       </div>
+      {workspaces.length > 1 && (
+        <div className="ws-picker" title="工作区：决定新会话绑定的根目录（会话创建后不可换根）">
+          <span className="ws-ico">🗂</span>
+          <select className="select ws-select" value={pendingWs} onChange={e => onPickWs(e.target.value)}>
+            {workspaces.map(w => (
+              <option key={w.id} value={w.id}>{w.name}{w.default ? '（默认）' : ''}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <nav className="nav">
         <a className={`nav-item${view === 'chat' ? ' active' : ''}`} onClick={() => onNav('chat')}><span className="ico">💬</span>会话</a>
         <a className={`nav-item${view === 'tasks' ? ' active' : ''}`} onClick={() => onNav('tasks')}><span className="ico">📋</span>任务</a>
@@ -433,6 +460,7 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
               {(s.tokensIn + s.tokensOut) > 0 && <span className="tok">{fmtTok(s.tokensIn + s.tokensOut)} tok</span>}
               {s.busy && <span className="tok">进行中</span>}
               {!s.busy && s.pendingApprovals > 0 && <span className="tok">⏳ 待审批</span>}
+              {s.workspaceId && s.workspaceId !== 'default' && <span className="tok" title={`工作区 ${s.workspaceId}`}>🗂 {s.workspaceId}</span>}
             </div>
             {!s.busy && (
               <div className="ops" onClick={e => e.stopPropagation()}>
