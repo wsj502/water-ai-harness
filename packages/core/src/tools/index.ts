@@ -17,7 +17,12 @@ export interface ToolContext {
    * M8/M12：派生子代理（由 Agent Loop 注入；嵌套子代理内不可用——防递归）。
    * opts.onEvent：子代理事件实时透传回调（streaming）；mode 决定工具集。
    */
-  spawnTask?: (prompt: string, opts?: { mode?: 'read' | 'write'; onEvent?: (ev: import('../types.js').LoopEvent) => void }) => Promise<string>;
+  spawnTask?: (prompt: string, opts?: {
+    mode?: 'read' | 'write';
+    onEvent?: (ev: import('../types.js').LoopEvent) => void;
+    /** M15：父级 task 调用的 callId（Loop 内部注入）——子级审批以 `${parentCallId}:${子id}` 命名空间透传 */
+    parentCallId?: string;
+  }) => Promise<string>;
 }
 
 export interface Tool {

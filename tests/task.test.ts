@@ -280,3 +280,222 @@ describe('M12 子代理流式透传 + 可写模式', () => {
     }
   });
 });
+
+describe('M15 子代理审批透传', () => {
+  /** 子代理对话用「可写执行」人设识别（与 M12 write 测试同法） */
+  function sysText(req: ChatRequest): string {
+    const sys = req.messages.find(m => m.role === 'system');
+    return sys?.parts.filter(p => p.type === 'text').map(p => (p as { text: string }).text).join('') ?? '';
+  }
+
+  it('子级 write 逐次经父级审批桥：callId 命名空间 + 批准后真实落盘', async () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m15a-'));
+    try {
+      class P implements Provider {
+        readonly protocol = 'openai' as const;
+        async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+          const hasToolResult = req.messages.some(m => m.role === 'tool');
+          if (sysText(req).includes('可写执行')) {
+            if (!hasToolResult) {
+              yield { type: 'tool_use', call: { type: 'tool_use', id: 'sw1', name: 'write', input: { path: 'm15.txt', content: 'approved-content' } } };
+              yield { type: 'done', stopReason: 'tool_use' };
+            } else {
+              yield { type: 'text_delta', text: '子代理完成' };
+              yield { type: 'done', stopReason: 'end' };
+            }
+            return;
+          }
+          if (!hasToolResult) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'p15', name: 'task', input: { prompt: '写 m15.txt', mode: 'write' } } };
+            yield { type: 'done', stopReason: 'tool_use' };
+          } else {
+            yield { type: 'text_delta', text: '父级收尾' };
+            yield { type: 'done', stopReason: 'end' };
+          }
+        }
+      }
+      const approvals: Array<{ id: string; name: string; reason: string }> = [];
+      const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '让它写' }] }];
+      const events = [];
+      for await (const ev of agentLoop({
+        provider: new P(), model: 'mock', system: 'SYS', messages,
+        tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+        approve: async (call, reason) => {
+          approvals.push({ id: call.id, name: call.name, reason });
+          return 'once';
+        },
+      })) events.push(ev);
+
+      // 审批顺序与命名空间：父级 task（原 callId）→ 子级 write（`父id:子id`）
+      expect(approvals.map(a => `${a.id}/${a.name}`)).toEqual(['p15/task', 'p15:sw1/write']);
+      expect(approvals[1]!.reason.startsWith('[子代理]')).toBe(true);
+      // 批准后子代理真实落盘
+      expect(readFileSync(path.join(tmp, 'm15.txt'), 'utf8')).toBe('approved-content');
+      // 子级获批事件经 sub_event 透传；task 正常完成
+      const subs = events.filter(e => e.type === 'sub_event') as Array<{ ev: { type: string; call?: { id: string } } }>;
+      expect(subs.some(e => e.ev.type === 'tool_approved' && e.ev.call?.id === 'sw1')).toBe(true);
+      const tr = events.find(e => e.type === 'tool_result' && (e as { call?: { name?: string } }).call?.name === 'task');
+      expect(tr!.type === 'tool_result' && tr!.isError).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: 'finish', reason: 'end' });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('子级 write 被拒：零落盘、子代理收到拒绝结果继续收尾（task 不因此失败）', async () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m15b-'));
+    try {
+      class P implements Provider {
+        readonly protocol = 'openai' as const;
+        async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+          const hasToolResult = req.messages.some(m => m.role === 'tool');
+          if (sysText(req).includes('可写执行')) {
+            if (!hasToolResult) {
+              yield { type: 'tool_use', call: { type: 'tool_use', id: 'sw1', name: 'write', input: { path: 'm15.txt', content: 'x' } } };
+              yield { type: 'done', stopReason: 'tool_use' };
+            } else {
+              yield { type: 'text_delta', text: '子代理完成' };
+              yield { type: 'done', stopReason: 'end' };
+            }
+            return;
+          }
+          if (!hasToolResult) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'p15', name: 'task', input: { prompt: '写 m15.txt', mode: 'write' } } };
+            yield { type: 'done', stopReason: 'tool_use' };
+          } else {
+            yield { type: 'text_delta', text: '父级收尾' };
+            yield { type: 'done', stopReason: 'end' };
+          }
+        }
+      }
+      const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '让它写' }] }];
+      const events = [];
+      for await (const ev of agentLoop({
+        provider: new P(), model: 'mock', system: 'SYS', messages,
+        tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+        // 父级批准派生，但拒绝子级的每一次写入
+        approve: async call => (call.name === 'write' ? 'deny' : 'once'),
+      })) events.push(ev);
+
+      expect(existsSync(path.join(tmp, 'm15.txt'))).toBe(false);
+      const subs = events.filter(e => e.type === 'sub_event') as Array<{ ev: { type: string; call?: { id: string } } }>;
+      expect(subs.some(e => e.ev.type === 'tool_denied' && e.ev.call?.id === 'sw1')).toBe(true);
+      // 拒绝不致命：子代理仍收尾产出，task 结果正常
+      const tr = events.find(e => e.type === 'tool_result' && (e as { call?: { name?: string } }).call?.name === 'task');
+      expect(tr!.type === 'tool_result' && tr!.isError).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: 'finish', reason: 'end' });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('无审批渠道（父级 grantSession 放行 task）：子级 write 保守拒绝、零落盘', async () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m15c-'));
+    try {
+      class P implements Provider {
+        readonly protocol = 'openai' as const;
+        async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+          const hasToolResult = req.messages.some(m => m.role === 'tool');
+          if (sysText(req).includes('可写执行')) {
+            if (!hasToolResult) {
+              yield { type: 'tool_use', call: { type: 'tool_use', id: 'sw1', name: 'write', input: { path: 'm15.txt', content: 'x' } } };
+              yield { type: 'done', stopReason: 'tool_use' };
+            } else {
+              yield { type: 'text_delta', text: '子代理完成' };
+              yield { type: 'done', stopReason: 'end' };
+            }
+            return;
+          }
+          if (!hasToolResult) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'p15', name: 'task', input: { prompt: '写 m15.txt', mode: 'write' } } };
+            yield { type: 'done', stopReason: 'tool_use' };
+          } else {
+            yield { type: 'text_delta', text: '父级收尾' };
+            yield { type: 'done', stopReason: 'end' };
+          }
+        }
+      }
+      // 父级引擎预放行 task（等价于规则表 allow / CLI --yes），全程没有 approve 通道：
+      // 子级 write → ask → 无路可问 → 保守拒绝——「无审批不落盘」契约在子代理内继续成立
+      const perms = new PermissionEngine({ autoAllowLowRisk: true });
+      perms.grantSession('task');
+      const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '让它写' }] }];
+      const events = [];
+      for await (const ev of agentLoop({
+        provider: new P(), model: 'mock', system: 'SYS', messages,
+        tools: builtinTools, permissions: perms,
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+      })) events.push(ev);
+
+      expect(existsSync(path.join(tmp, 'm15.txt'))).toBe(false);
+      const subs = events.filter(e => e.type === 'sub_event') as Array<{ ev: { type: string; call?: { id: string } } }>;
+      expect(subs.length).toBeGreaterThan(0); // 子代理确实运行过（task 被父级放行）
+      expect(subs.some(e => e.ev.type === 'tool_denied' && e.ev.call?.id === 'sw1')).toBe(true);
+      expect(events.at(-1)).toMatchObject({ type: 'finish', reason: 'end' });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('「session」授权记在子级引擎：同文件第二次写不再询问，跨文件仍需询问', async () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m15d-'));
+    try {
+      class P implements Provider {
+        readonly protocol = 'openai' as const;
+        async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+          if (!sysText(req).includes('可写执行')) {
+            const hasToolResult = req.messages.some(m => m.role === 'tool');
+            if (!hasToolResult) {
+              yield { type: 'tool_use', call: { type: 'tool_use', id: 'p15', name: 'task', input: { prompt: '写两个文件', mode: 'write' } } };
+              yield { type: 'done', stopReason: 'tool_use' };
+            } else {
+              yield { type: 'text_delta', text: '父级收尾' };
+              yield { type: 'done', stopReason: 'end' };
+            }
+            return;
+          }
+          const done = req.messages.filter(m => m.role === 'tool').length; // 子代理内已完成的工具轮数
+          if (done === 0) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'w1', name: 'write', input: { path: 'a.txt', content: 'v1' } } };
+          } else if (done === 1) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'w2', name: 'write', input: { path: 'a.txt', content: 'v2' } } };
+          } else if (done === 2) {
+            yield { type: 'tool_use', call: { type: 'tool_use', id: 'w3', name: 'write', input: { path: 'b.txt', content: 'bv' } } };
+          } else {
+            yield { type: 'text_delta', text: '子代理完成' };
+            yield { type: 'done', stopReason: 'end' };
+            return;
+          }
+          yield { type: 'done', stopReason: 'tool_use' };
+        }
+      }
+      const writeAsked: string[] = [];
+      const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '让它写' }] }];
+      const events = [];
+      for await (const ev of agentLoop({
+        provider: new P(), model: 'mock', system: 'SYS', messages,
+        tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+        approve: async call => {
+          if (call.name !== 'write') return 'once';
+          const p = String((call.input as { path?: string }).path ?? '');
+          writeAsked.push(p);
+          return p === 'a.txt' ? 'session' : 'once';
+        },
+      })) events.push(ev);
+
+      // a.txt 只询问一次（第二次被子级引擎按 write:a.txt 放行）；b.txt 仍要问
+      expect(writeAsked).toEqual(['a.txt', 'b.txt']);
+      expect(readFileSync(path.join(tmp, 'a.txt'), 'utf8')).toBe('v2');
+      expect(readFileSync(path.join(tmp, 'b.txt'), 'utf8')).toBe('bv');
+      const subs = events.filter(e => e.type === 'sub_event') as Array<{ ev: { type: string; call?: { name: string }; isError?: boolean } }>;
+      const writeResults = subs.filter(e => e.ev.type === 'tool_result' && e.ev.call?.name === 'write');
+      expect(writeResults.length).toBe(3);
+      expect(writeResults.every(e => e.ev.isError !== true)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

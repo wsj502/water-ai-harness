@@ -49,8 +49,10 @@ const SUB_AGENT_WRITE_SYSTEM = [
 const SUB_WRITE_TOOLS = new Set(['read', 'grep', 'glob', 'write', 'edit']);
 
 /**
- * M8/M12：运行一次子代理（嵌套 Agent Loop）。
- * mode=read 只读调研；mode=write 额外放行 write/edit（风险由父级 task 工具的 riskFor 逐次审批把关）。
+ * M8/M12/M15：运行一次子代理（嵌套 Agent Loop）。
+ * mode=read 只读调研；mode=write 可写执行——M15 起子级 write/edit 不再预授权
+ * （撤销 M12 的会话级放行），每次写入路由到父级审批桥：callId 加 `${parentCallId}:`
+ * 前缀命名空间（与主循环审批不碰撞），审批桥/pending/断开全拒语义与主循环完全复用。
  * 防递归双重保险：工具集过滤掉 task + 嵌套 ctx 不注入 spawnTask（用原始 opts.toolCtx）。
  * onEvent：子代理事件实时透传（M12 流式）。中断传播：共享父级 AbortSignal。
  */
@@ -59,19 +61,21 @@ function runSubAgent(
   prompt: string,
   mode: 'read' | 'write',
   onEvent?: (ev: LoopEvent) => void,
+  parentCallId?: string,
 ): Promise<string> {
   return (async () => {
     const subMessages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: prompt }] }];
     const subTools = opts.tools.filter(t =>
       t.spec.name !== 'task' && (mode === 'write' ? SUB_WRITE_TOOLS.has(t.spec.name) : t.risk === 'low'));
     const subPermissions = new PermissionEngine({ autoAllowLowRisk: true });
-    if (mode === 'write') {
-      // 安全推理：父级已对本次 task(write)（riskFor=high）逐次审批——「允许子代理写文件」
-      // 这道门在父级把过了；子级 write/edit 视为已授权（引擎的会话级授权语义）。
-      // shell 不在子工具集内，即便模型请求也会被高默认策略拒绝。
-      subPermissions.grantSession('write');
-      subPermissions.grantSession('edit');
-    }
+    // M15 审批透传：子级 write/edit（medium → ask）逐次路由到父级 approve 回调。
+    // 无审批渠道（opts.approve 缺失）→ 引擎 ask → 保守拒绝、零落盘（与主循环同语义）。
+    // 「session」授权记在子级引擎、key = write:<路径>：同文件免重复审批，跨文件/跨子代理不扩散。
+    // shell 不在子工具集内，即便模型请求也会被默认策略拒绝。
+    const subApprove: AgentLoopOptions['approve'] | undefined =
+      opts.approve && parentCallId
+        ? (call, reason) => opts.approve!({ ...call, id: `${parentCallId}:${call.id}` }, `[子代理] ${reason}`)
+        : undefined;
     try {
       for await (const ev of agentLoop({
         provider: opts.provider, model: opts.model,
@@ -80,6 +84,7 @@ function runSubAgent(
         permissions: subPermissions,
         toolCtx: opts.toolCtx, // 原始 ctx（无 spawnTask）
         maxTurns: 10, ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(subApprove ? { approve: subApprove } : {}),
       })) {
         onEvent?.(ev); // M12：实时透传（含 compacted 等管理事件——完整还原子过程）
       }
@@ -129,8 +134,9 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
   // M8/M12：工具执行上下文注入子代理派生器（嵌套循环用上面的原始 opts.toolCtx → 天然防递归）
   const execCtx: ToolContext = {
     ...opts.toolCtx,
-    spawnTask: (prompt: string, spawnOpts?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void }) =>
-      runSubAgent(opts, prompt, spawnOpts?.mode === 'write' ? 'write' : 'read', spawnOpts?.onEvent),
+    spawnTask: (prompt: string, spawnOpts?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void; parentCallId?: string }) =>
+      runSubAgent(opts, prompt, spawnOpts?.mode === 'write' ? 'write' : 'read',
+        spawnOpts?.onEvent, spawnOpts?.parentCallId),
   };
 
   for (let turn = 1; turn <= maxTurns; turn++) {
@@ -301,8 +307,13 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
         let settled = false;
         const originalSpawn = execCtx.spawnTask;
         if (originalSpawn) {
-          execCtx.spawnTask = (prompt: string, so?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void }) =>
-            originalSpawn(prompt, { ...so, onEvent: ev => { subQ.push(ev); wake?.(); so?.onEvent?.(ev); } });
+          // M15：除 onEvent 外再注入 parentCallId（当前 task 调用）——子级审批桥按它命名空间
+          execCtx.spawnTask = (prompt: string, so?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void; parentCallId?: string }) =>
+            originalSpawn(prompt, {
+              ...so,
+              onEvent: ev => { subQ.push(ev); wake?.(); so?.onEvent?.(ev); },
+              parentCallId: call.id,
+            });
         }
 
         let runResult: string;
