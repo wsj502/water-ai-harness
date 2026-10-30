@@ -28,6 +28,27 @@ fn sidecar_candidates(app: &tauri::AppHandle) -> Vec<PathBuf> {
     v
 }
 
+/// M24：mock 判定与 server 侧凭据链路对齐（packages/core/src/config.ts）。
+/// - 用户显式设置 WATER_MOCK：不覆盖，原样继承给子进程（含 "0"）
+/// - 否则按 server 的 env 名解析顺序找凭据：WATER_API_KEY_ENV 指向的变量
+///   → 默认协议的 ZHIPU_API_KEY / DEEPSEEK_API_KEY
+/// - 一个都找不到：保守 mock——桌面端不能因为没配 key 就给用户一个黑屏
+fn apply_mock_hint(cmd: &mut Command) {
+    if std::env::var("WATER_MOCK").is_ok() {
+        return; // 显式值经进程继承透传，交给 server 解释
+    }
+    let custom_key_set = std::env::var("WATER_API_KEY_ENV")
+        .ok()
+        .and_then(|name| std::env::var(&name).ok())
+        .is_some();
+    let has_key = custom_key_set
+        || std::env::var("ZHIPU_API_KEY").is_ok()
+        || std::env::var("DEEPSEEK_API_KEY").is_ok();
+    if !has_key {
+        cmd.env("WATER_MOCK", "1");
+    }
+}
+
 fn spawn_server(app: &tauri::AppHandle) -> Option<Child> {
     // 找 SEA 单文件 sidecar
     for cand in sidecar_candidates(app) {
@@ -35,9 +56,7 @@ fn spawn_server(app: &tauri::AppHandle) -> Option<Child> {
             let mut cmd = Command::new(&cand);
             cmd.current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
                 .env("WATER_PORT", "3210");
-            if std::env::var("ZHIPU_API_KEY").is_err() {
-                cmd.env("WATER_MOCK", "1");
-            }
+            apply_mock_hint(&mut cmd);
             return match cmd.spawn() {
                 Ok(c) => {
                     println!("[water] sidecar(SEA) 已启动 pid={} {:?}", c.id(), cand);
@@ -61,9 +80,7 @@ fn spawn_server(app: &tauri::AppHandle) -> Option<Child> {
     cmd.arg(entry)
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."))
         .env("WATER_PORT", "3210");
-    if std::env::var("ZHIPU_API_KEY").is_err() {
-        cmd.env("WATER_MOCK", "1");
-    }
+    apply_mock_hint(&mut cmd);
     match cmd.spawn() {
         Ok(c) => {
             println!("[water] sidecar(node) 已启动 pid={}", c.id());
