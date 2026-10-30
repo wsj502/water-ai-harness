@@ -55,7 +55,7 @@ flowchart LR
     end
     subgraph 内核 water-core
         LOOP[Agent Loop<br/>压缩·审批·失控防护] --> PROV[Provider Registry<br/>双协议适配]
-        LOOP --> TOOL[内置工具 ×6<br/>read/write/edit/grep/glob/shell]
+        LOOP --> TOOL[内置工具 ×7<br/>read/write/edit/grep/glob/shell/task]
         LOOP --> PERM[权限引擎<br/>三级风险 + 会话记忆]
     end
     接入层 -->|HTTP + SSE 事件流| LOOP
@@ -63,7 +63,7 @@ flowchart LR
     PLUG[ESM 插件 + MCP 桥] --> TOOL
 ```
 
-## 功能矩阵（v0.4.0）
+## 功能矩阵（v0.5.0）
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
@@ -123,7 +123,7 @@ docs/articles/       13 篇深度文章（学习路线）
 npm run typecheck          # 类型检查
 npm test                   # vitest 全量单测（含协议 golden）
 npm run build              # 全量构建
-npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，27 断言）
+npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，73 断言）
 ```
 
 ## 路线图
@@ -132,7 +132,7 @@ npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，27 断�
 - [x] v0.2.0（M0-M6）：开源工程地基 / 模型切换 / 上下文管理 / Web 体验 / 测试基建 / 文章深化 / 转公开
 - [x] v0.3.0（M7-M11）：会话与工作区管理 / 只读子代理 / LLM 摘要压缩 / CLI 命令对齐 / 文章深挖第二批
 - [x] v0.4.0（M12-M14）：子代理流式透传与可写模式 / 配置式命令与多 MCP / 会话消息排队
-- [ ] v0.5 计划：子代理事件嵌套 UI（时间线视图）、审批桥透传到子代理、多会话并行（跨会话调度）、配置式插件进阶（声明式工具）
+- [x] v0.5.0（M15-M18）：子代理审批透传与嵌套时间线 / 跨会话并行调度（全局并发上限）/ 配置式声明工具（配置即插件进阶）
 
 ## 贡献与安全
 
