@@ -36,7 +36,7 @@ function matchFilter(t: TaskRecord, f: Filter): boolean {
 }
 
 /** 任务页：接 GET /api/tasks 真实数据；有运行中任务时 2s 轮询，复刻 P0 的任务卡片 */
-export function TasksView() {
+export function TasksView({ onOpenSession }: { onOpenSession?: (sessionId: string) => void }) {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -108,6 +108,13 @@ export function TasksView() {
                     </div>
                   ))}
                   {running && <div className="step"><span className="st-ico">⏳</span><span style={{ color: 'var(--amber)' }}>Loop 进行中…</span></div>}
+                  {/* #71：任务源自用户的提问——看完步骤跳回当时的完整对话（会话视图自动切回） */}
+                  {onOpenSession && (
+                    <div className="step" onClick={e => e.stopPropagation()}>
+                      <span className="st-ico">↩</span>
+                      <a className="txtdim" style={{ cursor: 'pointer' }} onClick={() => onOpenSession(t.sessionId)}>查看会话（{t.sessionId}）</a>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -73,6 +73,7 @@ export default function App() {
   }, [blocks]);
 
   const openSession = useCallback(async (id: string) => {
+    setView('chat'); // #71：任何页面点会话（最近/归档列表/任务跳转）都切回会话视图展示
     setActiveId(id);
     setError(null);
     setUsage(null);
@@ -307,7 +308,7 @@ export default function App() {
       </main>
       )}
       {view === 'plugins' && <PluginsView />}
-      {view === 'tasks' && <TasksView />}
+      {view === 'tasks' && <TasksView onOpenSession={openSession} />}
       {view === 'workspace' && <WorkspaceView onInject={injectRef} workspaceId={effWsId} />}
       {view === 'settings' && <SettingsView />}
       <footer className="statusbar">
