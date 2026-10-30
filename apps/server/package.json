@@ -1,6 +1,6 @@
 {
   "name": "@water/server",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Water Server — HTTP + SSE 会话协议服务（三端共用的内核接入层）",
   "type": "module",
   "exports": {

@@ -1,6 +1,6 @@
 {
   "name": "water-harness",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Water CLI — AI Agent Harness 的命令行端",
   "type": "module",
   "bin": {
