@@ -515,6 +515,74 @@ async function main(): Promise<void> {
       'M17 prompt 型执行：模板 $text 展开为入参（结果回填实证）');
     ok(ev17.at(-1)?.type === 'finish', 'M17 场景正常 finish');
 
+    // ---- 15. 审批回放统一（M19：主审批入缓冲 + 断开宽限重连不误杀）----
+    const sid19 = await mkSession();
+    const ac19 = new AbortController();
+    const evBefore19: Array<Record<string, unknown>> = [];
+    {
+      // 发消息读到主循环审批帧后断开连接（模拟刷新页面）
+      const resp = await fetch(`${BASE}/api/sessions/${sid19}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '[[mock:m15-task]] 演示断开重连（M19）' }),
+        signal: ac19.signal,
+      });
+      if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      readLoop: for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+          if (!data) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(data); } catch { continue; }
+          evBefore19.push(ev);
+          if (ev.type === 'approval_required') break readLoop;
+        }
+      }
+      ac19.abort(); // 断开——宽限开始，Loop 挂在审批上继续存活
+    }
+    ok(evBefore19.some(e => e.type === 'approval_required'), 'M19 断开前收到主循环审批帧');
+    // 断开后：审批帧已在回放缓冲（刷新接流可见）；运行未被断开误杀
+    const rp19 = await jfetch<{ events: Array<{ seq: number; ev: Record<string, unknown> }>; busy: boolean }>(`${BASE}/api/sessions/${sid19}/events?since=0`);
+    ok(rp19.body.events.some(e => e.ev.type === 'approval_required'), 'M19 主循环审批帧进回放缓冲（断开后可补帧）');
+    ok(rp19.body.busy === true, 'M19 断开后宽限期内运行仍存活（busy，未被误杀）');
+    // 重连（读 events 即重连信号）后放行主审批 → 子代理跑起来 → 子级审批照常入缓冲
+    const okMain = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid19}/approve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callId: 'mock-task-m15', decision: 'once' }),
+    });
+    ok(okMain.status === 200, 'M19 宽限期内审批端点放行主审批');
+    const waitEv19 = async (pred: (ev: Record<string, unknown>) => boolean, ms = 8000): Promise<Record<string, unknown> | null> => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        const r = await jfetch<{ events: Array<{ seq: number; ev: Record<string, unknown> }> }>(`${BASE}/api/sessions/${sid19}/events?since=0`);
+        const hit = r.body.events.find(e => pred(e.ev));
+        if (hit) return hit.ev;
+        await new Promise(r => setTimeout(r, 150));
+      }
+      return null;
+    };
+    const subAp19 = await waitEv19(ev => ev.type === 'sub_event'
+      && (ev as { ev?: Record<string, unknown> }).ev?.type === 'approval_required');
+    ok(Boolean(subAp19), 'M19 断开期间子级审批帧照常进缓冲');
+    const subCallId = subAp19 ? ((subAp19 as { ev: { callId: string } }).ev.callId) : '';
+    const okSub = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid19}/approve`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callId: subCallId, decision: 'once' }),
+    });
+    ok(okSub.status === 200 && okSub.body.ok, 'M19 重连后子级审批放行（namespaced callId）');
+    const fin19 = await waitEv19(ev => ev.type === 'finish');
+    ok(Boolean(fin19), 'M19 断开→重连→审批→运行完整结束（回放里可见 finish）');
+    const list19 = await jfetch<{ sessions: Array<{ id: string; busy: boolean }> }>(`${BASE}/api/sessions`);
+    ok(list19.body.sessions.find(x => x.id === sid19)?.busy === false, 'M19 结束后会话解除 busy（宽限定时器清理）');
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）

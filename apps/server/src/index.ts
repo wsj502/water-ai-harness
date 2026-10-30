@@ -60,6 +60,11 @@ const mockProvider = new MockProvider();
 const MAX_PARALLEL_SESSIONS = Math.max(1, Number(process.env.WATER_MAX_PARALLEL_SESSIONS) || 3);
 const parallelGate = new ParallelGate(MAX_PARALLEL_SESSIONS);
 
+// M19：断开宽限期——SSE 断开不再立即中断运行；期内重连（events 端点读取即视为重连）可继续，
+// 超时才中断 Loop + 全拒（安全兜底不放松）。设为 0 回到「断开即中断」的旧语义
+const graceMs = Number(process.env.WATER_APPROVAL_GRACE_MS);
+const APPROVAL_GRACE_MS = Number.isFinite(graceMs) && graceMs >= 0 ? graceMs : 60_000;
+
 // ---- SYSTEM prompt（M2）：env WATER_SYSTEM > config.json systemPrompt > 内置默认 ----
 // M7B：AGENTS.md 按工作区加载——SYSTEM 成为「全局基底 + 各工作区项目上下文」的组合
 const DEFAULT_SYSTEM = [
@@ -351,6 +356,7 @@ app.get('/api/sessions/:id/messages', c => {
 app.get('/api/sessions/:id/events', c => {
   const s = store.get(c.req.param('id'));
   if (!s) return c.json({ error: 'session not found' }, 404);
+  s.notifyReconnect(); // M19：读取回放端点 = 客户端还活着（断开宽限期内重连的信号）
   const since = Number(c.req.query('since') ?? 0) || 0;
   return c.json({ events: s.eventsSince(since), busy: s.busy });
 });
@@ -473,15 +479,18 @@ app.post('/api/sessions/:id/messages', async c => {
   const turn = s.enqueueTurn();
 
   return streamSSE(c, async stream => {
+    // M19：安全发送——宽限期内客户端可能已断开，SSE 写失败不能中断运行（事件已进回放缓冲）
+    const send = (frame: { id?: string; event: string; data: string }): Promise<void> =>
+      stream.writeSSE(frame).catch(() => { /* 已断开：回放缓冲里仍有这份事件 */ });
     if (turn.position > 0) {
       // 瞬时状态事件：不进回放缓冲（不属于本次运行的事件序列）
-      await stream.writeSSE({ event: 'queued', data: JSON.stringify({ type: 'queued', position: turn.position }) });
+      await send({ event: 'queued', data: JSON.stringify({ type: 'queued', position: turn.position }) });
     }
     await turn.wait(); // 等前一条完成（按到达顺序串行）
 
     // 排队期间客户端已断开：跳过执行，直接释放闸门
     if (c.req.raw.signal.aborted) {
-      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
+      await send({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
       turn.release();
       return;
     }
@@ -489,7 +498,7 @@ app.post('/api/sessions/:id/messages', async c => {
     // M16：全局并行闸门——会话级闸门获得后再取全局槽位；跨会话 FIFO 排队
     const slot = parallelGate.acquire();
     if (slot.queued) {
-      await stream.writeSSE({
+      await send({
         event: 'queued',
         data: JSON.stringify({ type: 'queued', position: slot.position, scope: 'global' }),
       });
@@ -497,7 +506,7 @@ app.post('/api/sessions/:id/messages', async c => {
     await slot.ready;
     if (c.req.raw.signal.aborted || store.get(s.id) !== s) {
       // 全局排队期间断开/会话已被删除：同 M14 语义——跳过执行，释放两级闸门
-      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
+      await send({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
       slot.release();
       turn.release();
       return;
@@ -508,11 +517,19 @@ app.post('/api/sessions/:id/messages', async c => {
     if (s.title === '新会话') s.title = text.slice(0, 30);
     s.resetEventBuffer(); // M3：回放缓冲只覆盖本次运行
 
-    // 请求中断 → 中断 Loop + 悬挂审批全拒（只作用于本次已获得执行权的运行）
+    // M19：断开宽限——SSE 断开不再立即中断；宽限期内重连（events 端点读取）可继续，
+    // 超时才中断 Loop + 全拒（安全兜底不放松；WATER_APPROVAL_GRACE_MS=0 回到旧语义）
     const ac = new AbortController();
     c.req.raw.signal.addEventListener('abort', () => {
-      ac.abort();
-      s.denyAllPending();
+      if (APPROVAL_GRACE_MS <= 0) {
+        ac.abort();
+        s.denyAllPending();
+        return;
+      }
+      s.beginGrace(APPROVAL_GRACE_MS, () => {
+        ac.abort();
+        s.denyAllPending();
+      });
     });
     // 审批桥：Loop 内发起审批时，先向客户端广播 approval_required，再等审批端点 resolve。
     // M15：子级审批（callId 含 `${task调用id}:` 命名空间前缀）包成 sub_event 嵌套帧，
@@ -520,20 +537,15 @@ app.post('/api/sessions/:id/messages', async c => {
     // 后续 tool_approved/tool_denied 帧会把状态收拢）；审批端点无需区分父子——
     // pending 按完整 callId 挂起，resolve 语义与主循环一致。
     const approve = (call: ToolUsePart) => {
+      // M19：主/子审批帧统一进回放缓冲（此前主循环审批是瞬时事件——刷新即丢）；
+      // 后续 tool_approved/tool_denied 帧会把回放出的审批卡收拢到终态。
+      // M15：子级审批（callId 含命名空间前缀）包成 sub_event 嵌套帧，归入 task 工具卡。
       const sep = call.id.indexOf(':');
-      if (sep > 0) {
-        const frame = {
-          type: 'sub_event', callId: call.id.slice(0, sep),
-          ev: { type: 'approval_required', callId: call.id, call },
-        };
-        const seq = s.recordEvent(frame);
-        void stream.writeSSE({ id: String(seq), event: frame.type, data: JSON.stringify(frame) });
-      } else {
-        void stream.writeSSE({
-          event: 'approval_required',
-          data: JSON.stringify({ type: 'approval_required', callId: call.id, call }),
-        });
-      }
+      const frame = sep > 0
+        ? { type: 'sub_event', callId: call.id.slice(0, sep), ev: { type: 'approval_required', callId: call.id, call } }
+        : { type: 'approval_required', callId: call.id, call };
+      const seq = s.recordEvent(frame);
+      void send({ id: String(seq), event: frame.type, data: JSON.stringify(frame) });
       return s.waitApproval(call);
     };
 
@@ -574,13 +586,13 @@ app.post('/api/sessions/:id/messages', async c => {
             : ev.reason === 'error' ? 'error'
             : ev.reason === 'aborted' ? 'aborted' : 'max_turns';
         }
-        // M3：帧 id = 事件 seq（断线后可经 /events?since= 补帧）
+        // M3：帧 id = 事件 seq（断线后可经 /events?since= 补帧；M19 断开宽限期内照常入缓冲）
         const seq = s.recordEvent(ev);
-        await stream.writeSSE({ id: String(seq), event: ev.type, data: JSON.stringify(ev) });
+        await send({ id: String(seq), event: ev.type, data: JSON.stringify(ev) });
       }
     } catch (e) {
       task.status = 'error';
-      await stream.writeSSE({
+      await send({
         event: 'error',
         data: JSON.stringify({ type: 'finish', reason: 'error', message: String(e) }),
       });
@@ -589,6 +601,7 @@ app.post('/api/sessions/:id/messages', async c => {
       store.finishTask(task); // 终态落库
       s.busy = false;
       s.denyAllPending();
+      s.cancelGrace(); // M19：运行结束清掉宽限定时器
       store.save(s); // 消息处理结束 → 落库
       turn.release(); // M14：放行下一条排队消息
       slot.release(); // M16：释放全局槽位（转交给跨会话等待者）
