@@ -78,10 +78,14 @@ async function main(): Promise<void> {
   if (!existsSync(SERVER)) {
     throw new Error(`未找到 ${SERVER}——请先 npm run build`);
   }
-  // 独立临时工作区：测试会话/数据库不污染开发目录
+  // 独立临时工作区：测试会话/数据库不污染开发目录；第二个目录用于 M7B 多工作区验证
   const workdir = mkdtempSync(path.join(tmpdir(), 'water-e2e-'));
+  const workdir2 = mkdtempSync(path.join(tmpdir(), 'water-e2e2-'));
   const child = spawn(process.execPath, [SERVER], {
-    env: { ...process.env, WATER_MOCK: '1', WATER_PORT: String(PORT) },
+    env: {
+      ...process.env, WATER_MOCK: '1', WATER_PORT: String(PORT),
+      WATER_WORKSPACES: workdir2,
+    },
     cwd: workdir,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -210,6 +214,27 @@ async function main(): Promise<void> {
     const gone = await jfetch<{ error?: string }>(`${BASE}/api/sessions/${sid4}/messages`);
     ok(gone.status === 404, '删除后 404');
 
+    // ---- 9. 工作区注册表（M7B：多根绑定 + 白名单防目录逃逸）----
+    const wss = await jfetch<{ workspaces: Array<{ id: string; path: string; default: boolean }> }>(`${BASE}/api/workspaces`);
+    // 注册表 id 归一化为小写（Windows 路径大小写不敏感），测试侧同步归一
+    const ws2id = path.basename(workdir2).toLowerCase();
+    ok(wss.body.workspaces.some(w => w.id === 'default' && w.default), '注册表含不可删的 default');
+    ok(wss.body.workspaces.some(w => w.id === ws2id && w.path === workdir2), `环境变量工作区 ${ws2id} 注册`);
+    const sws = await jfetch<{ id: string; workspaceId: string | null }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: ws2id }),
+    });
+    ok(sws.status === 201 && sws.body.workspaceId === ws2id, `会话绑定工作区 ${ws2id}`);
+    const tree2 = await jfetch<{ root: string }>(`${BASE}/api/files/tree?workspaceId=${encodeURIComponent(ws2id)}`);
+    ok(tree2.body.root === workdir2, '文件树按会话工作区解析（root = 第二工作区）');
+    const evilWs = await jfetch<{ error?: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: '../../etc' }),
+    });
+    ok(evilWs.status === 400, '任意路径 workspaceId 被白名单 400 拒绝');
+    const patchWs = await jfetch<{ error?: string }>(`${BASE}/api/sessions/${sws.body.id}/config`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: 'default' }),
+    });
+    ok(patchWs.status === 400, '存续期换根被拒（工作区创建时定死）');
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）
@@ -220,6 +245,8 @@ async function main(): Promise<void> {
     ]);
     try { rmSync(workdir, { recursive: true, force: true }); }
     catch { /* 清理失败不影响结果：留在 %TEMP% 由系统回收 */ }
+    try { rmSync(workdir2, { recursive: true, force: true }); }
+    catch { /* 同上 */ }
   }
   if (failed > 0) process.exit(1);
 }

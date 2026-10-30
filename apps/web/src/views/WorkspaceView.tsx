@@ -40,7 +40,7 @@ function TreeNode({ node, depth, selected, onSelect }: {
 }
 
 /** 工作区页：文件树 + 内容预览，接 /api/files/* 真实数据；「在会话中引用」注入 composer */
-export function WorkspaceView({ onInject }: { onInject: (text: string) => void }) {
+export function WorkspaceView({ onInject, workspaceId }: { onInject: (text: string) => void; workspaceId?: string }) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [root, setRoot] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -49,14 +49,18 @@ export function WorkspaceView({ onInject }: { onInject: (text: string) => void }
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.fileTree().then(r => { setTree(r.tree); setRoot(r.root); }).catch(e => setError(String(e)));
-  }, []);
+    setSelected(null);
+    setContent(null);
+    api.fileTree(workspaceId)
+      .then(r => { setTree(r.tree); setRoot(r.root); })
+      .catch(e => setError(String(e)));
+  }, [workspaceId]);
 
   const open = (p: string) => {
     setSelected(p);
     setContent(null);
     setFileSize(null);
-    api.fileContent(p)
+    api.fileContent(p, workspaceId)
       .then(r => { setContent(r.content); setFileSize(r.size); })
       .catch(e => setContent(`（读取失败：${e}）`));
   };

@@ -28,6 +28,7 @@ import {
 } from '@water/core';
 import { SessionStore, type ApprovalDecision, type Session, type SessionProtocol, type TaskRecord, type TaskStep } from './session.js';
 import { SessionPersistence } from './persistence.js';
+import { loadWorkspaces, type WorkspaceInfo } from './workspaces.js';
 
 const cfg = resolveConfig({});
 const mock = process.env.WATER_MOCK === '1';
@@ -55,18 +56,29 @@ const registry = new ProviderRegistry(
 const mockProvider = new MockProvider();
 
 // ---- SYSTEM prompt（M2）：env WATER_SYSTEM > config.json systemPrompt > 内置默认 ----
-// 工作区根有 AGENTS.md 则自动拼接为「项目上下文」（重启生效；凭据红线与模型无关，不受限）
+// M7B：AGENTS.md 按工作区加载——SYSTEM 成为「全局基底 + 各工作区项目上下文」的组合
 const DEFAULT_SYSTEM = [
   '你是 Water，一个工作在当前代码仓库里的 AI 编程助手。',
   '可用工具：read/write/edit/grep/glob/shell。优先小步快跑，改动前先读代码。',
   '回答使用中文，简洁、直接、技术导向。',
 ].join('\n');
 const SYSTEM_BASE = process.env.WATER_SYSTEM ?? fileCfg.systemPrompt ?? DEFAULT_SYSTEM;
-const agentsPath = path.join(cfg.cwd, 'AGENTS.md');
-const agentsMd = existsSync(agentsPath) ? readFileSync(agentsPath, 'utf8').slice(0, 8000) : null;
-const SYSTEM = agentsMd
-  ? `${SYSTEM_BASE}\n\n# 项目上下文（工作区 AGENTS.md）\n${agentsMd}`
-  : SYSTEM_BASE;
+
+function buildSystem(root: string): { system: string; hasAgents: boolean } {
+  const agentsPath = path.join(root, 'AGENTS.md');
+  const agentsMd = existsSync(agentsPath) ? readFileSync(agentsPath, 'utf8').slice(0, 8000) : null;
+  return agentsMd
+    ? { system: `${SYSTEM_BASE}\n\n# 项目上下文（工作区 AGENTS.md）\n${agentsMd}`, hasAgents: true }
+    : { system: SYSTEM_BASE, hasAgents: false };
+}
+
+// ---- 工作区注册表（M7B）----
+const workspaces = loadWorkspaces(cfg.cwd);
+/** 会话的工作区：绑定 id 查注册表，未绑定/失联回退 default（白名单校验天然防目录逃逸） */
+function findWorkspace(id?: string | null): WorkspaceInfo {
+  return workspaces.find(w => w.id === id) ?? workspaces.find(w => w.default)!;
+}
+const SYSTEM_BY_WS = new Map(workspaces.map(w => [w.id, buildSystem(w.path)]));
 
 /** 会话生效的上下文预算：强制 env > 模型注册表窗口 × 0.8（M2） */
 function contextBudget(s: Session): number | undefined {
@@ -106,8 +118,11 @@ function runBuiltinCommand(text: string, s: Session): string | null {
       store.save(s);
       return `上下文已压缩：估算 ${comp.estBefore} → ${comp.estAfter} token（丢弃 ${comp.droppedMessages} 条旧消息，截断 ${comp.truncatedResults} 条工具结果）`;
     }
-    case 'system':
-      return `当前生效 SYSTEM（${SYSTEM.length} 字符${agentsMd ? '，含工作区 AGENTS.md' : ''}，前 600 字预览）：\n${SYSTEM.slice(0, 600)}${SYSTEM.length > 600 ? '\n…' : ''}`;
+    case 'system': {
+      const ws = findWorkspace(s.workspaceId);
+      const built = SYSTEM_BY_WS.get(ws.id)!;
+      return `当前生效 SYSTEM（工作区 ${ws.id}${built.hasAgents ? '，含其 AGENTS.md' : ''}，前 600 字预览）：\n${built.system.slice(0, 600)}${built.system.length > 600 ? '\n…' : ''}`;
+    }
     default:
       return null; // 交给插件命令
   }
@@ -168,6 +183,14 @@ app.get('/api/models', c => c.json({
   })),
   default: { protocol: cfg.protocol, model: cfg.model },
   mock,
+}));
+
+/**
+ * M7B 工作区清单：注册表白名单（id/name/path/default）。
+ * 前端只能传这里的 id；任意路径一律 400——与模型端点同构的安全模型。
+ */
+app.get('/api/workspaces', c => c.json({
+  workspaces: workspaces.map(w => ({ id: w.id, name: w.name, path: w.path, default: w.default })),
 }));
 
 /** 校验并应用会话级配置（建会话与 PATCH 共用）。返回错误信息或 null */
@@ -241,23 +264,23 @@ app.get('/api/tasks', c => c.json({ tasks: store.listTasks() }));
 
 interface FileNode { name: string; path: string; dir: boolean; children?: FileNode[] }
 
-function resolveInCwd(p: string): string {
-  const abs = path.resolve(cfg.cwd, p);
-  const root = path.resolve(cfg.cwd);
-  if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error('路径越出工作区');
+function resolveInCwd(root: string, p: string): string {
+  const abs = path.resolve(root, p);
+  const r = path.resolve(root);
+  if (abs !== r && !abs.startsWith(r + path.sep)) throw new Error('路径越出工作区');
   return abs;
 }
 
-async function buildTree(dir: string, depth: number): Promise<FileNode[]> {
+async function buildTree(root: string, dir: string, depth: number): Promise<FileNode[]> {
   if (depth <= 0) return [];
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   const out: FileNode[] = [];
   for (const e of entries) {
     if (e.name === 'node_modules' || e.name === '.git' || e.name === 'dist' || e.name === 'target') continue;
     const full = path.join(dir, e.name);
-    const rel = path.relative(cfg.cwd, full).replace(/\\/g, '/');
+    const rel = path.relative(root, full).replace(/\\/g, '/');
     if (e.isDirectory()) {
-      out.push({ name: e.name, path: rel, dir: true, children: await buildTree(full, depth - 1) });
+      out.push({ name: e.name, path: rel, dir: true, children: await buildTree(root, full, depth - 1) });
     } else {
       out.push({ name: e.name, path: rel, dir: false });
     }
@@ -267,8 +290,9 @@ async function buildTree(dir: string, depth: number): Promise<FileNode[]> {
 
 app.get('/api/files/tree', async c => {
   try {
-    const tree = await buildTree(cfg.cwd, 4);
-    return c.json({ root: cfg.cwd, tree });
+    const ws = findWorkspace(c.req.query('workspaceId'));
+    const tree = await buildTree(ws.path, ws.path, 4);
+    return c.json({ root: ws.path, tree, workspaceId: ws.id });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
@@ -278,7 +302,8 @@ app.get('/api/files/content', async c => {
   const p = c.req.query('path');
   if (!p) return c.json({ error: '缺少 path 参数' }, 400);
   try {
-    const abs = resolveInCwd(p);
+    const ws = findWorkspace(c.req.query('workspaceId'));
+    const abs = resolveInCwd(ws.path, p);
     const st = await fsp.stat(abs);
     if (st.size > 512 * 1024) return c.json({ error: '文件过大（>512KB），仅支持预览小文件' }, 413);
     const text = await fsp.readFile(abs, 'utf8');
@@ -307,12 +332,22 @@ app.get('/api/sessions/:id/events', c => {
 });
 
 app.post('/api/sessions', async c => {
-  const body = await c.req.json<{ protocol?: unknown; model?: unknown }>().catch(() => ({}));
+  const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
+  // M7B：工作区绑定——创建时定死，只接受注册表内的 id（防目录逃逸）
+  let wsId: string | null = null;
+  if (body.workspaceId !== undefined && body.workspaceId !== null) {
+    if (typeof body.workspaceId !== 'string' || !workspaces.some(w => w.id === body.workspaceId)) {
+      return c.json({ error: `未知工作区 ${String(body.workspaceId)}（白名单：GET /api/workspaces）` }, 400);
+    }
+    wsId = body.workspaceId as string;
+  }
+  const { workspaceId: _strip, ...rest } = body ?? {};
   const s = store.create();
-  const err = applySessionConfig(s, body ?? {});
+  if (wsId) s.workspaceId = wsId;
+  const err = applySessionConfig(s, rest);
   if (err) { store.delete(s.id); return c.json({ error: err }, 400); }
   store.save(s);
-  return c.json({ id: s.id, protocol: s.protocol, model: s.model }, 201);
+  return c.json({ id: s.id, protocol: s.protocol, model: s.model, workspaceId: s.workspaceId }, 201);
 });
 
 /** M1：会话级模型/协议切换（运行时生效，无需重启进程；busy 中拒绝） */
@@ -394,6 +429,10 @@ app.post('/api/sessions/:id/messages', async c => {
   const rt = sessionRuntime(s);
   if ('error' in rt) return c.json({ error: rt.error }, 400);
 
+  // M7B：会话绑定的工作区——SYSTEM（含其 AGENTS.md）与工具执行根都随工作区
+  const ws = findWorkspace(s.workspaceId);
+  const wsSystem = SYSTEM_BY_WS.get(ws.id)!.system;
+
   // M2：上下文预算（强制 env > 模型窗口 × 0.8）
   const forced = Number(process.env.WATER_MAX_CONTEXT_TOKENS) || 0;
   const budget = forced > 0 ? forced
@@ -433,10 +472,10 @@ app.post('/api/sessions/:id/messages', async c => {
 
     try {
       for await (const ev of agentLoop({
-        provider: rt.provider, model: rt.model, system: SYSTEM, messages: s.messages,
+        provider: rt.provider, model: rt.model, system: wsSystem, messages: s.messages,
         ...(budget !== undefined ? { maxContextTokens: budget } : {}),
         tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
-        toolCtx: { cwd: cfg.cwd }, approve,
+        toolCtx: { cwd: ws.path }, approve,
         maxTurns: 20, signal: ac.signal,
       })) {
         // 收集任务步骤

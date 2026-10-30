@@ -34,6 +34,16 @@ export interface SessionMeta {
   model?: string | null;
   /** M7A：归档状态 */
   archived?: boolean;
+  /** M7B：绑定工作区（null/缺省 = default） */
+  workspaceId?: string | null;
+}
+
+/** 工作区注册表条目（GET /api/workspaces） */
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  path: string;
+  default: boolean;
 }
 
 /** 模型注册表条目（GET /api/models） */
@@ -122,6 +132,9 @@ export const api = {
 
   models: () => fetch(`${BASE}/api/models`).then(r => json<ModelsResponse>(r)),
 
+  workspaces: () =>
+    fetch(`${BASE}/api/workspaces`).then(r => json<{ workspaces: WorkspaceInfo[] }>(r)).then(j => j.workspaces),
+
   listSessions: (archived?: boolean) =>
     fetch(`${BASE}/api/sessions${archived ? '?archived=1' : ''}`)
       .then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
@@ -135,19 +148,20 @@ export const api = {
   permissions: () =>
     fetch(`${BASE}/api/permissions`).then(r => json<{ autoAllowLowRisk: boolean; rules: PermissionRuleInfo[] }>(r)),
 
-  fileTree: () =>
-    fetch(`${BASE}/api/files/tree`).then(r => json<{ root: string; tree: FileNode[] }>(r)),
+  fileTree: (workspaceId?: string) =>
+    fetch(`${BASE}/api/files/tree${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`)
+      .then(r => json<{ root: string; tree: FileNode[]; workspaceId?: string }>(r)),
 
-  fileContent: (path: string) =>
-    fetch(`${BASE}/api/files/content?path=${encodeURIComponent(path)}`)
+  fileContent: (path: string, workspaceId?: string) =>
+    fetch(`${BASE}/api/files/content?path=${encodeURIComponent(path)}${workspaceId ? `&workspaceId=${encodeURIComponent(workspaceId)}` : ''}`)
       .then(r => json<{ path: string; size: number; content: string }>(r)),
 
-  createSession: (init?: { model?: string; protocol?: string }) =>
+  createSession: (init?: { model?: string; protocol?: string; workspaceId?: string }) =>
     fetch(`${BASE}/api/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(init ?? {}),
-    }).then(r => json<{ id: string; protocol: string | null; model: string | null }>(r)),
+    }).then(r => json<{ id: string; protocol: string | null; model: string | null; workspaceId: string | null }>(r)),
 
   /** 会话级模型/协议切换（M1）；reset:true 回到服务端默认；archived 归档（M7A） */
   setSessionConfig: (sid: string, cfg: { model?: string; protocol?: string; reset?: boolean; archived?: boolean }) =>

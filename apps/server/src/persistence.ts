@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { WMessage } from '@water/core';
 
-interface SessionRow { id: string; title: string; created_at: number; protocol?: string | null; model?: string | null; archived?: number | null }
+interface SessionRow { id: string; title: string; created_at: number; protocol?: string | null; model?: string | null; archived?: number | null; workspace_id?: string | null }
 interface MessageRow { session_id: string; seq: number; role: string; parts: string }
 export interface TaskRow {
   id: string; session_id: string; title: string;
@@ -55,6 +55,8 @@ export class SessionPersistence {
     this.addColumnIfMissing('sessions', 'model', 'TEXT');
     // M7A 迁移：归档标记
     this.addColumnIfMissing('sessions', 'archived', 'INTEGER');
+    // M7B 迁移：工作区绑定
+    this.addColumnIfMissing('sessions', 'workspace_id', 'TEXT');
   }
 
   private addColumnIfMissing(table: string, column: string, ddl: string): void {
@@ -64,9 +66,9 @@ export class SessionPersistence {
     }
   }
 
-  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[]; protocol?: string | null; model?: string | null; archived?: boolean }[] {
+  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[]; protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null }[] {
     const sessions = this.db
-      .prepare('SELECT id, title, created_at, protocol, model, archived FROM sessions ORDER BY created_at DESC')
+      .prepare('SELECT id, title, created_at, protocol, model, archived, workspace_id FROM sessions ORDER BY created_at DESC')
       .all() as unknown as SessionRow[];
     const msgStmt = this.db.prepare(
       'SELECT role, parts FROM messages WHERE session_id = ? ORDER BY seq',
@@ -81,6 +83,7 @@ export class SessionPersistence {
         id: s.id, title: s.title, createdAt: s.created_at, messages,
         protocol: s.protocol ?? null, model: s.model ?? null,
         archived: Boolean(s.archived),
+        workspaceId: s.workspace_id ?? null,
       };
     });
   }
@@ -88,14 +91,14 @@ export class SessionPersistence {
   /** 整存整取：删旧插新（事务保证原子性） */
   saveSession(
     id: string, title: string, createdAt: number, messages: WMessage[],
-    config?: { protocol?: string | null; model?: string | null; archived?: boolean },
+    config?: { protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null },
   ): void {
     this.db.exec('BEGIN');
     try {
       this.db.prepare(
-        'INSERT INTO sessions (id, title, created_at, protocol, model, archived) VALUES (?, ?, ?, ?, ?, ?) ' +
-        'ON CONFLICT(id) DO UPDATE SET title = excluded.title, protocol = excluded.protocol, model = excluded.model, archived = excluded.archived',
-      ).run(id, title, createdAt, config?.protocol ?? null, config?.model ?? null, config?.archived ? 1 : 0);
+        'INSERT INTO sessions (id, title, created_at, protocol, model, archived, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(id) DO UPDATE SET title = excluded.title, protocol = excluded.protocol, model = excluded.model, archived = excluded.archived, workspace_id = excluded.workspace_id',
+      ).run(id, title, createdAt, config?.protocol ?? null, config?.model ?? null, config?.archived ? 1 : 0, config?.workspaceId ?? null);
       this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id);
       const ins = this.db.prepare(
         'INSERT INTO messages (session_id, seq, role, parts) VALUES (?, ?, ?, ?)',
