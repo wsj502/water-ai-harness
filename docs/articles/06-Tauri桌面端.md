@@ -57,7 +57,7 @@ CORS 已由 server 的 `cors()` 中间件放行。
 ### 3. sidecar 的生命周期
 
 - **启动**：Rust `setup()` 里 spawn `node apps/server/dist/index.js`
-- **降级**：检测不到 `ZHIPU_API_KEY` 时自动 `WATER_MOCK=1`——桌面端开箱即玩
+- **降级**：无任何已知凭据（`WATER_API_KEY_ENV` 指向的变量 / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`）时自动 `WATER_MOCK=1`——桌面端开箱即玩；用户显式设置 `WATER_MOCK` 时永远优先（v0.7 M24：壳的判定与 server 侧 `config.ts` 凭据链路对齐，不再只认单一 env 名）
 - **清理**：窗口 `Destroyed` 事件里 kill 子进程，不留孤儿
 - **生产硬化（TODO）**：现在依赖系统 node；正式发布应把 server 打成
   Node SEA（单文件可执行）作为 Tauri externalBin sidecar，随包分发
@@ -107,3 +107,26 @@ wix 打包中文路径偶发失败（CI 上用英文路径规避）；sidecar �
 
 **选型回望**：Tauri 的代价是 Rust 工具链与 sidecar 双进程管理；换来的是
 10MB 级壳、原生 WebView、和"Web 代码零改动"——对学习项目，这个交换比极高。
+
+## v0.7 回归记录（M24）
+
+v0.1 时代的 sidecar 与四代协议演进（M14 排队 / M16 并行闸门 / M19 审批回放+宽限期）之间的缺口，
+在 2026-10-30 收口（#58）：
+
+- **sidecar 重建**：`build-sea.ps1` 全链路（esbuild bundle 185.5KB → sea blob →
+  官方 node v24.18.0 基座 92.5MB → postject 注入），产物 92.85MB，Tauri externalBin 槽位同步刷新。
+  官方基座下载是全流程最慢一环（~93MB），缓存于 `%TEMP%\node-sea-base.exe` 后可复跑
+- **壳凭据判定对齐**：`lib.rs` 不再只认 `ZHIPU_API_KEY` 单名——`WATER_MOCK` 显式设置
+  永远优先（含 "0"），否则按 server 侧 `config.ts` 的解析顺序找凭据
+  （`WATER_API_KEY_ENV` 指向的变量 → `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`），
+  全无则保守 mock。壳与内核的判定从此同源
+- **SEA 冒烟 11 断言全过**：config 版本与 mock / 模型注册表 / 会话创建 / SSE 剧本到
+  finish / 帧 id 单调（M3 游标）/ 事件回放 since=0 补帧（M19 依赖的同一缓冲）/
+  node:sqlite 持久化。**冒烟中还抓到一次测试期望写错**：`/api/config` 用
+  `protocol: "mock"` 表达 mock 模式，`mock` 布尔字段在 `/api/models` 响应里——
+  修期望而非改产品（纪律：期望错了修期望）
+- **版本号归位**：`tauri.conf.json` / `Cargo.toml` 从 0.1.0 追平 0.6.0，
+  此后随发版流程统一 bump
+- **已知限制（如实）**：CI 仍不覆盖 desktop（Rust 工具链 + WebView2 系统依赖成本）；
+  WebView 内五页视图/审批/排队为人工冒烟清单（见 #58）；固定端口 3210 仍是
+  「生产应随机端口+端口文件」的遗留债
