@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### 新增（M10 · CLI 内置命令）
+
+- `water chat` 命令对齐 Web：`/help` / `/model`（注册表清单，含凭据就绪与当前项）/ `/model <id>`（协议随模型切换，下一条消息生效，缺凭据拒绝切换）/ `/compact`（预算=模型窗口×0.8，报告压缩结果）/ `/system`（生效 SYSTEM，含工作区 AGENTS.md）
+- 未知 `/xxx` 显式拦截（不静默发给模型）
+- **修复 readline 管道丢行**：`rl.question` 在两次提问之间到达的 line 事件会丢失（交互正常、脚本化 stdin 全毁）——改为事件驱动 + 行缓存的 ask
+- SYSTEM 描述同步 M8（task 工具）；AGENTS.md 拼接与 server 行为一致
+- 离线实测全命令（管道驱动 7 条输入逐一验证）
+
 ### 新增（M8 · 只读研究子代理）
 
 - 新内置工具 `task`：派生子代理处理「先调研再回答」类子任务——`{prompt, description?}`，自包含研究问题
