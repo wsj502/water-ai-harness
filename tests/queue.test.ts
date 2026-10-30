@@ -1,10 +1,12 @@
 /**
  * M14 排队闸门单测：Session.enqueueTurn 的顺序/计数/链式释放（确定性，不依赖网络竞态）。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Session } from '../apps/server/src/session.js';
 import { ParallelGate } from '../apps/server/src/gate.js';
 import type { ToolUsePart } from '@water/core';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('M14 enqueueTurn（消息排队闸门）', () => {
   it('按到达顺序获得执行权；waiters 计数正确', async () => {
@@ -127,5 +129,34 @@ describe('M16 并发正确性（按会话隔离）', () => {
     a.resetEventBuffer();
     expect(a.eventsSince(0)).toEqual([]);
     expect(b.eventsSince(0).length).toBe(2); // B 的回放完好
+  });
+});
+
+describe('M19 断开宽限（Session 宽限状态机）', () => {
+  it('beginGrace 超时触发 onExpire；notifyReconnect 取消倒计时', () => {
+    vi.useFakeTimers();
+    const s = new Session('m19a');
+    const expired: number[] = [];
+    s.beginGrace(1000, () => expired.push(1));
+    vi.advanceTimersByTime(999);
+    expect(expired).toEqual([]);
+    s.notifyReconnect(); // 宽限期内重连：倒计时取消
+    vi.advanceTimersByTime(5000);
+    expect(expired).toEqual([]);
+    s.beginGrace(1000, () => expired.push(2));
+    vi.advanceTimersByTime(1000);
+    expect(expired).toEqual([2]); // 未重连 → 超时触发（中断 Loop + 全拒的回调语义）
+  });
+
+  it('cancelGrace 幂等；重复 beginGrace 以最后一次为准', () => {
+    vi.useFakeTimers();
+    const s = new Session('m19b');
+    const fired: number[] = [];
+    s.beginGrace(100, () => fired.push(1));
+    s.beginGrace(100, () => fired.push(2));
+    s.cancelGrace();
+    s.cancelGrace();
+    vi.advanceTimersByTime(10_000);
+    expect(fired).toEqual([]);
   });
 });

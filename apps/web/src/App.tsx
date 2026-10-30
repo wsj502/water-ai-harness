@@ -68,29 +68,36 @@ export default function App() {
     setPendingModel(null);
     try {
       const h = await api.history(id);
-      setBlocks(hydrateBlocks(h.messages));
-      // M3：busy 会话（如刷新页面时仍在跑）→ 从 events 端点接上本次运行的事件流
       const list = await api.listSessions().catch(() => []);
       setSessions(list);
       const meta = list.find(s => s.id === id);
       if (meta?.busy) {
+        // M19：busy 会话（刷新时仍在跑）——历史只水合到本次运行的最后一条 user 消息，
+        // 其后由事件回放（since=0）渲染（避免与已入史的运行内消息重复）；
+        // 轮询用递增游标逐段补帧（宽限期内运行继续产出事件）
+        const lastUser = h.messages.findLastIndex(m => m.role === 'user');
+        setBlocks(hydrateBlocks(h.messages.slice(0, lastUser + 1)));
         setBusy(true);
         void (async () => {
           try {
+            let cursor = 0;
             for (;;) {
-              const { events, busy: still } = await api.eventsSince(id, 0);
+              const { events, busy: still } = await api.eventsSince(id, cursor);
               for (const e of events) {
                 if (e.ev.type === 'usage') setUsage({ input: e.ev.inputTokens, output: e.ev.outputTokens });
                 setBlocks(bs => applyEvent(bs, e.ev));
+                cursor = Math.max(cursor, e.seq);
               }
-              if (!still && !events.some(e => (e.ev as { type: string }).type === 'finish')) break;
               if (events.some(e => (e.ev as { type: string }).type === 'finish')) break;
-              await new Promise(r => setTimeout(r, 1500));
+              if (!still) break;
+              await new Promise(r => setTimeout(r, 1000));
             }
           } catch { /* 接流失败则保持历史视图 */ }
           finally { setBusy(false); }
           api.listSessions().then(setSessions).catch(() => {});
         })();
+      } else {
+        setBlocks(hydrateBlocks(h.messages));
       }
     } catch (e) {
       setBlocks([]);

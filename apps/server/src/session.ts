@@ -86,6 +86,8 @@ export class Session {
   events: BufferedEvent[] = [];
   private seq = 0;
   private pending = new Map<string, PendingApproval>();
+  /** M19：断开宽限定时器（SSE 断开不立即杀运行；期内重连取消，超时中断+全拒） */
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(id: string) { this.id = id; }
 
@@ -129,6 +131,21 @@ export class Session {
   }
 
   get pendingCount(): number { return this.pending.size; }
+
+  // ---- M19：断开宽限（SSE 断开不立即杀运行；等重连或超时） ----
+
+  /** 进入宽限期：期内 notifyReconnect() 可取消；超时执行 onExpire（中断 Loop + 全拒） */
+  beginGrace(ms: number, onExpire: () => void): void {
+    this.cancelGrace();
+    this.graceTimer = setTimeout(() => { this.graceTimer = null; onExpire(); }, ms);
+  }
+
+  /** 客户端重连信号（events 回放端点被读取即视为重连）：取消宽限倒计时 */
+  notifyReconnect(): void { this.cancelGrace(); }
+
+  cancelGrace(): void {
+    if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; }
+  }
 }
 
 export class SessionStore {
