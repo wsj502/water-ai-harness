@@ -36,13 +36,19 @@ export default function App() {
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   /** 未激活会话时选的模型：作为下个新会话的初始配置（M1） */
   const [pendingModel, setPendingModel] = useState<string | null>(null);
+  /** 侧栏会话过滤：false 最近会话 / true 归档（M7A） */
+  const [archivedView, setArchivedView] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const refreshSessions = useCallback((archived: boolean) => {
+    return api.listSessions(archived).then(setSessions).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.config().then(setConfig).catch(e => setError(String(e)));
     api.models().then(m => { setModels(m.models); setMockMode(m.mock); }).catch(() => {});
-    api.listSessions().then(setSessions).catch(() => {});
+    refreshSessions(false);
     api.listPlugins().then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
   }, []);
 
@@ -90,6 +96,7 @@ export default function App() {
 
   const send = useCallback(async (text: string) => {
     if (!text.trim() || busy) return;
+    if (activeMeta?.archived) { setError('会话已归档：请先取消归档再继续对话'); return; }
     setBusy(true);
     setError(null);
     try {
@@ -151,13 +158,40 @@ export default function App() {
     if (activeId) {
       try {
         await api.setSessionConfig(activeId, modelId ? { model: modelId } : { reset: true });
-        const list = await api.listSessions();
+        const list = await api.listSessions(archivedView);
         setSessions(list);
       } catch (e) { setError(String(e)); }
     } else {
       setPendingModel(modelId);
     }
-  }, [activeId]);
+  }, [activeId, archivedView]);
+
+  /** M7A：归档/取消归档 */
+  const toggleArchive = useCallback(async (s: SessionMeta) => {
+    try {
+      await api.setSessionConfig(s.id, { archived: !s.archived });
+      await refreshSessions(archivedView);
+    } catch (e) { setError(String(e)); }
+  }, [archivedView, refreshSessions]);
+
+  /** M7A：删除会话（确认；删除当前会话则回到空白态） */
+  const removeSession = useCallback(async (s: SessionMeta) => {
+    if (!window.confirm(`删除会话「${s.title}」？\n历史与任务记录将一并移除，不可恢复。`)) return;
+    try {
+      await api.deleteSession(s.id);
+      if (s.id === activeId) {
+        abortRef.current?.abort();
+        setActiveId(null); setBlocks([]); setUsage(null); setError(null);
+      }
+      await refreshSessions(archivedView);
+    } catch (e) { setError(String(e)); }
+  }, [archivedView, activeId, refreshSessions]);
+
+  /** M7A：侧栏过滤切换（最近会话 ↔ 归档） */
+  const switchFilter = useCallback((to: boolean) => {
+    setArchivedView(to);
+    refreshSessions(to);
+  }, [refreshSessions]);
 
   /** 工作区文件引用：注入 composer 并切回会话页 */
   const injectRef = useCallback((text: string) => {
@@ -208,7 +242,9 @@ export default function App() {
         current={{ model: effModel, protocol: effProtocol }}
         showDefault={sessionOverridden} disabled={busy} onPick={pickModel} />
       <Sidebar sessions={sessions} activeId={activeId} view={view} config={config}
-        onOpen={openSession} onNew={newSession} onNav={setView} />
+        onOpen={openSession} onNew={newSession} onNav={setView}
+        archivedView={archivedView} onFilter={switchFilter}
+        onArchive={toggleArchive} onDelete={removeSession} />
       {view === 'chat' && (
       <main className="main">
         <div className="chat-scroll" ref={scrollRef}>
@@ -228,8 +264,9 @@ export default function App() {
             {busy && <div style={{ color: 'var(--text-2)', fontSize: 12 }}>生成中…（Esc 中断）</div>}
           </div>
         </div>
-        <Composer onSend={send} busy={busy} config={config} usage={usage} model={effModel}
-          pluginCount={pluginCount} onNavPlugins={() => setView('plugins')} prefill={prefill} />
+        <Composer onSend={send} busy={busy || Boolean(activeMeta?.archived)} config={config} usage={usage} model={effModel}
+          pluginCount={pluginCount} onNavPlugins={() => setView('plugins')} prefill={prefill}
+          archived={Boolean(activeMeta?.archived)} />
       </main>
       )}
       {view === 'plugins' && <PluginsView />}
@@ -346,7 +383,7 @@ function ModelPill({ models, mockMode, current, showDefault, disabled, onPick }:
   );
 }
 
-function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav }: {
+function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archivedView, onFilter, onArchive, onDelete }: {
   sessions: SessionMeta[];
   activeId: string | null;
   view: View;
@@ -354,6 +391,10 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav }: {
   onOpen: (id: string) => void;
   onNew: () => void;
   onNav: (v: View) => void;
+  archivedView: boolean;
+  onFilter: (to: boolean) => void;
+  onArchive: (s: SessionMeta) => void;
+  onDelete: (s: SessionMeta) => void;
 }) {
   const wsName = config?.workspace.split(/[\\/]/).filter(Boolean).pop() ?? '';
   return (
@@ -373,22 +414,39 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav }: {
         <a className={`nav-item${view === 'settings' ? ' active' : ''}`} onClick={() => onNav('settings')}><span className="ico">⚙</span>设置</a>
       </nav>
       <div className="section-title">
-        最近会话 <span className="new" title="新建会话" onClick={onNew}>＋</span>
+        {archivedView ? '📦 归档' : '最近会话'}
+        {archivedView
+          ? <span className="new" title="返回最近会话" onClick={() => onFilter(false)}>↩</span>
+          : <>
+            <span className="filter" title="查看归档会话" onClick={() => onFilter(true)}>📦</span>
+            <span className="new" title="新建会话" onClick={onNew}>＋</span>
+          </>}
       </div>
       <div className="sessions">
         {sessions.map(s => (
           <div key={s.id}
             className={`session${s.id === activeId ? ' active' : ''}`}
             onClick={() => onOpen(s.id)}>
-            <div className="t">{s.title}</div>
+            <div className="t">{s.title}{s.archived && !archivedView ? ' 📦' : ''}</div>
             <div className="m">
               <span>{s.turns} 轮</span>
               {(s.tokensIn + s.tokensOut) > 0 && <span className="tok">{fmtTok(s.tokensIn + s.tokensOut)} tok</span>}
               {s.busy && <span className="tok">进行中</span>}
               {!s.busy && s.pendingApprovals > 0 && <span className="tok">⏳ 待审批</span>}
             </div>
+            {!s.busy && (
+              <div className="ops" onClick={e => e.stopPropagation()}>
+                <span className="op" title={s.archived ? '取消归档' : '归档（历史保留，停用对话）'}
+                  onClick={() => onArchive(s)}>{s.archived ? '↩' : '📦'}</span>
+                <span className="op danger" title="删除会话（不可恢复）"
+                  onClick={() => onDelete(s)}>🗑</span>
+              </div>
+            )}
           </div>
         ))}
+        {archivedView && sessions.length === 0 && (
+          <div style={{ color: 'var(--text-2)', fontSize: 12, padding: '8px 10px' }}>暂无归档会话</div>
+        )}
       </div>
       <div className="sidebar-foot">
         <div className="avatar">我</div>
@@ -546,7 +604,7 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
   );
 }
 
-function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugins, prefill }: {
+function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugins, prefill, archived }: {
   onSend: (text: string) => void;
   busy: boolean;
   config: ServerConfig | null;
@@ -555,6 +613,7 @@ function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugin
   pluginCount: number;
   onNavPlugins: () => void;
   prefill: { text: string; nonce: number } | null;
+  archived: boolean;
 }) {
   const [text, setText] = useState('');
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -571,7 +630,7 @@ function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugin
   }, [prefill]);
 
   const submit = () => {
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busy || archived) return;
     onSend(text);
     setText('');
   };
@@ -583,10 +642,13 @@ function Composer({ onSend, busy, config, usage, model, pluginCount, onNavPlugin
             ref={taRef}
             value={text}
             onChange={e => setText(e.target.value)}
+            disabled={archived}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
-            placeholder="向 Water 描述任务…（Enter 发送，Shift+Enter 换行，Esc 中断生成）"
+            placeholder={archived
+              ? '📦 会话已归档（历史可查看）——侧栏 ↩ 取消归档后可继续对话'
+              : '向 Water 描述任务…（Enter 发送，Shift+Enter 换行，Esc 中断生成）'}
           />
           <div className="composer-foot">
             {pluginCount > 0 && (

@@ -32,6 +32,8 @@ export interface SessionMeta {
   /** 会话级覆盖（null/缺省 = 跟随服务端默认） */
   protocol?: string | null;
   model?: string | null;
+  /** M7A：归档状态 */
+  archived?: boolean;
 }
 
 /** 模型注册表条目（GET /api/models） */
@@ -120,8 +122,9 @@ export const api = {
 
   models: () => fetch(`${BASE}/api/models`).then(r => json<ModelsResponse>(r)),
 
-  listSessions: () =>
-    fetch(`${BASE}/api/sessions`).then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
+  listSessions: (archived?: boolean) =>
+    fetch(`${BASE}/api/sessions${archived ? '?archived=1' : ''}`)
+      .then(r => json<{ sessions: SessionMeta[] }>(r)).then(j => j.sessions),
 
   listPlugins: () =>
     fetch(`${BASE}/api/plugins`).then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
@@ -146,13 +149,17 @@ export const api = {
       body: JSON.stringify(init ?? {}),
     }).then(r => json<{ id: string; protocol: string | null; model: string | null }>(r)),
 
-  /** 会话级模型/协议切换（M1）；reset:true 回到服务端默认 */
-  setSessionConfig: (sid: string, cfg: { model?: string; protocol?: string; reset?: boolean }) =>
+  /** 会话级模型/协议切换（M1）；reset:true 回到服务端默认；archived 归档（M7A） */
+  setSessionConfig: (sid: string, cfg: { model?: string; protocol?: string; reset?: boolean; archived?: boolean }) =>
     fetch(`${BASE}/api/sessions/${sid}/config`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(cfg),
     }).then(r => json<{ ok: boolean; protocol: string | null; model: string | null }>(r)),
+
+  /** 删除会话（busy 中服务端 409） */
+  deleteSession: (sid: string) =>
+    fetch(`${BASE}/api/sessions/${sid}`, { method: 'DELETE' }).then(r => json<{ ok: boolean }>(r)),
 
   history: (sid: string) =>
     fetch(`${BASE}/api/sessions/${sid}/messages`).then(r => json<{ title: string; messages: WMessage[] }>(r)),

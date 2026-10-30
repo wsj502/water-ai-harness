@@ -182,6 +182,34 @@ async function main(): Promise<void> {
     const out4 = await cmd('/compact');
     ok(out4.includes('压缩') || out4.includes('token'), '/compact 报告上下文状态');
 
+    // ---- 8. 会话管理（M7A：归档语义 + 删除接线）----
+    const s4 = await jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const sid4 = s4.body.id;
+    const arch = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid4}/config`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived: true }),
+    });
+    ok(arch.status === 200, 'PATCH archived=true 归档');
+    const activeList = await jfetch<{ sessions: Array<{ id: string }> }>(`${BASE}/api/sessions`);
+    ok(!activeList.body.sessions.some(s => s.id === sid4), '归档后默认列表不可见');
+    const archList = await jfetch<{ sessions: Array<{ id: string; archived: boolean }> }>(`${BASE}/api/sessions?archived=1`);
+    ok(archList.body.sessions.some(s => s.id === sid4 && s.archived), '?archived=1 可见且标记正确');
+    const blocked = await jfetch<{ error?: string }>(`${BASE}/api/sessions/${sid4}/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }),
+    });
+    ok(blocked.status === 400, '归档会话发消息被 400 拒绝');
+    const hist = await jfetch<{ title: string }>(`${BASE}/api/sessions/${sid4}/messages`);
+    ok(hist.status === 200, '归档会话历史仍可查看');
+    const unarch = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid4}/config`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived: false }),
+    });
+    ok(unarch.status === 200, '取消归档');
+    const del = await jfetch<{ ok: boolean }>(`${BASE}/api/sessions/${sid4}`, { method: 'DELETE' });
+    ok(del.status === 200 && del.body.ok, 'DELETE 删除会话');
+    const gone = await jfetch<{ error?: string }>(`${BASE}/api/sessions/${sid4}/messages`);
+    ok(gone.status === 404, '删除后 404');
+
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
     // 等子进程真正退出再清临时目录（Windows 下进程 cwd 会锁目录，立刻删必 EPERM）
