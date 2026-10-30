@@ -619,6 +619,29 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
           )}
         </div>
       )}
+      {/* M12：子代理过程（实时透传的 sub_event 折叠记录） */}
+      {call.name === 'task' && (block.subText || (block.subTools?.length ?? 0) > 0) && (
+        <details className="sub-proc">
+          <summary className="label">
+            🤖 子代理过程{block.subTurns ? `（${block.subTurns} 轮）` : ''}
+            {(block.subTools?.length ?? 0) > 0 ? ` · ${block.subTools!.length} 次工具调用` : ''}
+          </summary>
+          {block.subTools && block.subTools.length > 0 && (
+            <div className="sub-tools">
+              {block.subTools.map((t, i) => (
+                <span key={i} className={`chip ${t.ok === true ? 'ok' : t.ok === false ? 'deny' : ''}`}>
+                  {TOOL_ICON[t.name] ?? '⚙'} {t.name}{t.ok === false ? ' ✕' : t.ok === null ? ' ⛔' : ''}
+                </span>
+              ))}
+            </div>
+          )}
+          {block.subText && (
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 6, color: 'var(--text-1)' }}>
+              {block.subText.slice(0, 600)}{block.subText.length > 600 ? '…' : ''}
+            </div>
+          )}
+        </details>
+      )}
       {status === 'done' && block.result && (
         <div className="codeblock" style={{ padding: '8px 12px', whiteSpace: 'pre-wrap' }}>
           {block.result.slice(0, 600)}

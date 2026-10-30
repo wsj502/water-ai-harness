@@ -107,6 +107,8 @@ export type LoopEvent =
   | { type: 'tool_approved'; call: ToolUsePart; scope: 'once' | 'session' }
   | { type: 'tool_denied'; call: ToolUsePart }
   | { type: 'tool_result'; call: ToolUsePart; result: string; isError: boolean; durationMs: number }
+  /** M12：子代理事件透传——嵌套 LoopEvent 原样包装（callId 关联到 task 工具卡） */
+  | { type: 'sub_event'; callId: string; ev: LoopEvent }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | {
     type: 'compacted'; droppedMessages: number; truncatedResults: number;

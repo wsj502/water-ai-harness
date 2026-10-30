@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### 新增（M12 · 子代理流式透传 + 可写模式）
+
+- 新 LoopEvent `sub_event {callId, ev}`（自引用联合）：子代理事件实时透传——工具执行期**事件泵**（队列+wake）把子代理的轮次/思考/文本/工具调用实时 yield，task 工具卡从黑盒变直播
+- `task` 新增 `mode: 'read' | 'write'`（默认 read）；`Tool.riskFor?(input)` **动态风险**——write 模式提升为 high 逐次审批，read 保持 medium
+- write 模式工具集 read/grep/glob/write/edit（无 shell 无递归）；子级 write/edit 授权推理：父级已对 task(write)=high 把过关，子级以会话级授权放行（引擎既有 API，零核心改动）
+- Web task 工具卡新增「🤖 子代理过程」折叠区：子工具时间线 chips（成功/失败/被拒）+ 文本预览 + 轮次计数
+- vitest 3 用例（透传顺序与 callId/write 真实落盘+工具集断言/无审批保守拒绝且零落盘）
+
 ## [0.3.0] - 2026-10-30
 
 v0.3.0 主题：**会话与工作区的管理权 + 内核能力补全（子代理/摘要压缩）+ 三端体验对齐**。

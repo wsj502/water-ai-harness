@@ -34,28 +34,55 @@ import type { PluginHooks } from './plugin/types.js';export interface AgentLoopO
   signal?: AbortSignal;
 }
 
-const SUB_AGENT_SYSTEM = [
+const SUB_AGENT_READ_SYSTEM = [
   '你是 Water 的只读研究子代理。收到一个自包含的研究问题，用工具（read/grep/glob）收集信息，',
   '然后给出简洁、信息密集的结论。你不能修改文件，不能执行命令，也不能询问用户——独立完成。',
 ].join('\n');
 
+const SUB_AGENT_WRITE_SYSTEM = [
+  '你是 Water 的可写执行子代理。收到一个自包含的任务：先用 read/grep/glob 弄清现状，',
+  '再用 write/edit 完成修改。小步快跑，改动前先读目标文件；不要执行命令；不要询问用户。',
+  '完成后用一两句话说明改了什么、为什么这样改。',
+].join('\n');
+
+/** write 模式的工具白名单（无 shell、无递归 task） */
+const SUB_WRITE_TOOLS = new Set(['read', 'grep', 'glob', 'write', 'edit']);
+
 /**
- * M8：运行一次只读研究子代理（嵌套 Agent Loop）。
+ * M8/M12：运行一次子代理（嵌套 Agent Loop）。
+ * mode=read 只读调研；mode=write 额外放行 write/edit（风险由父级 task 工具的 riskFor 逐次审批把关）。
  * 防递归双重保险：工具集过滤掉 task + 嵌套 ctx 不注入 spawnTask（用原始 opts.toolCtx）。
- * 中断传播：共享父级 AbortSignal。返回最后一条 assistant 文本。
+ * onEvent：子代理事件实时透传（M12 流式）。中断传播：共享父级 AbortSignal。
  */
-function runSubAgent(opts: AgentLoopOptions, prompt: string): Promise<string> {
+function runSubAgent(
+  opts: AgentLoopOptions,
+  prompt: string,
+  mode: 'read' | 'write',
+  onEvent?: (ev: LoopEvent) => void,
+): Promise<string> {
   return (async () => {
     const subMessages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: prompt }] }];
-    const subTools = opts.tools.filter(t => t.risk === 'low' && t.spec.name !== 'task');
+    const subTools = opts.tools.filter(t =>
+      t.spec.name !== 'task' && (mode === 'write' ? SUB_WRITE_TOOLS.has(t.spec.name) : t.risk === 'low'));
+    const subPermissions = new PermissionEngine({ autoAllowLowRisk: true });
+    if (mode === 'write') {
+      // 安全推理：父级已对本次 task(write)（riskFor=high）逐次审批——「允许子代理写文件」
+      // 这道门在父级把过了；子级 write/edit 视为已授权（引擎的会话级授权语义）。
+      // shell 不在子工具集内，即便模型请求也会被高默认策略拒绝。
+      subPermissions.grantSession('write');
+      subPermissions.grantSession('edit');
+    }
     try {
-      for await (const _ev of agentLoop({
+      for await (const ev of agentLoop({
         provider: opts.provider, model: opts.model,
-        system: SUB_AGENT_SYSTEM, messages: subMessages, tools: subTools,
-        permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        system: mode === 'write' ? SUB_AGENT_WRITE_SYSTEM : SUB_AGENT_READ_SYSTEM,
+        messages: subMessages, tools: subTools,
+        permissions: subPermissions,
         toolCtx: opts.toolCtx, // 原始 ctx（无 spawnTask）
         maxTurns: 10, ...(opts.signal ? { signal: opts.signal } : {}),
-      })) { /* 子代理事件不透传（M8 界定；流式子代理块留作后续） */ }
+      })) {
+        onEvent?.(ev); // M12：实时透传（含 compacted 等管理事件——完整还原子过程）
+      }
     } catch { /* 中断/异常：返回已收集内容 */ }
     const last = [...subMessages].reverse().find(m => m.role === 'assistant');
     const text = last?.parts
@@ -99,8 +126,12 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
     opts.messages.unshift({ role: 'system', parts: [{ type: 'text', text: opts.system }] });
   }
 
-  // M8：工具执行上下文注入子代理派生器（嵌套循环用上面的原始 opts.toolCtx → 天然防递归）
-  const execCtx: ToolContext = { ...opts.toolCtx, spawnTask: (prompt: string) => runSubAgent(opts, prompt) };
+  // M8/M12：工具执行上下文注入子代理派生器（嵌套循环用上面的原始 opts.toolCtx → 天然防递归）
+  const execCtx: ToolContext = {
+    ...opts.toolCtx,
+    spawnTask: (prompt: string, spawnOpts?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void }) =>
+      runSubAgent(opts, prompt, spawnOpts?.mode === 'write' ? 'write' : 'read', spawnOpts?.onEvent),
+  };
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
@@ -214,9 +245,10 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
         continue;
       }
 
-      // 权限检查
+      // 权限检查（M12：动态风险——riskFor 按实参计算，如 task write 模式提升为 high）
       const summary = tool.argSummary(call.input);
-      let decision = permissions.check(call.name, tool.risk, summary);
+      const risk = tool.riskFor?.(call.input) ?? tool.risk;
+      let decision = permissions.check(call.name, risk, summary);
       if (decision === 'ask') {
         if (!opts.approve) {
           decision = 'deny'; // 无交互渠道时保守拒绝
@@ -262,7 +294,33 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
 
       const started = Date.now();
       try {
-        const result = await tool.run(call.input, execCtx);
+        // M12 事件泵：工具执行期间把子代理事件实时 yield（sub_event 包装，关联当前 callId）。
+        // 实现方式：临时包一层 spawnTask，把 onEvent 注入当前泵——工具串行执行，无并发竞争。
+        const subQ: LoopEvent[] = [];
+        let wake: (() => void) | null = null;
+        let settled = false;
+        const originalSpawn = execCtx.spawnTask;
+        if (originalSpawn) {
+          execCtx.spawnTask = (prompt: string, so?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void }) =>
+            originalSpawn(prompt, { ...so, onEvent: ev => { subQ.push(ev); wake?.(); so?.onEvent?.(ev); } });
+        }
+
+        let runResult: string;
+        try {
+          const runP = tool.run(call.input, execCtx)
+            .finally(() => { settled = true; wake?.(); });
+          while (!settled || subQ.length > 0) {
+            while (subQ.length > 0) {
+              yield { type: 'sub_event', callId: call.id, ev: subQ.shift()! };
+            }
+            if (!settled) await new Promise<void>(r => { wake = r; });
+          }
+          runResult = await runP;
+        } finally {
+          if (originalSpawn) execCtx.spawnTask = originalSpawn;
+        }
+
+        const result = runResult;
         const durationMs = Date.now() - started;
         for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, true, durationMs); } catch { /* 忽略 */ } }
         yield { type: 'tool_result', call, result, isError: false, durationMs };

@@ -14,15 +14,20 @@ export interface ToolContext {
   /** 工作区根目录，所有相对路径都解析到这里 */
   cwd: string;
   /**
-   * M8：派生只读研究子代理（由 Agent Loop 注入；嵌套子代理内不可用——防递归）。
-   * 工具层只依赖这个注入点，内核不需要为子代理引入新的顶层概念。
+   * M8/M12：派生子代理（由 Agent Loop 注入；嵌套子代理内不可用——防递归）。
+   * opts.onEvent：子代理事件实时透传回调（streaming）；mode 决定工具集。
    */
-  spawnTask?: (prompt: string) => Promise<string>;
+  spawnTask?: (prompt: string, opts?: { mode?: 'read' | 'write'; onEvent?: (ev: import('../types.js').LoopEvent) => void }) => Promise<string>;
 }
 
 export interface Tool {
   spec: ToolSpec;
   risk: Risk;
+  /**
+   * M12：按调用实参动态计算风险（缺省用静态 risk）。
+   * 例：task 工具 mode=write 时提升为 high（写入需逐次审批）。
+   */
+  riskFor?(input: Record<string, unknown>): Risk;
   /** 用于权限 key 的参数摘要，如 shell 返回命令串 */
   argSummary(input: Record<string, unknown>): string;
   run(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
@@ -249,26 +254,29 @@ const shellTool: Tool = {
 // ---------- M8：只读研究子代理 ----------
 
 const taskTool: Tool = {
-  // 不碰文件，但每次派生是一整段子对话的 token 成本 → medium（用户可「本会话总是允许」）
+  // 只读派生：medium（token 成本）；write 模式经 riskFor 动态提升为 high（写入逐次审批）
   risk: 'medium',
+  riskFor: input => (input.mode === 'write' ? 'high' : 'medium'),
   spec: {
     name: 'task',
-    description: '派生只读研究子代理：给它一个自包含的研究问题，它用 read/grep/glob 收集信息并返回结论。'
-      + '适合「先调研 X 再回答」类子任务，避免主上下文被探索性内容塞满。'
-      + '子代理不能修改文件、不能再派生子代理，最多 10 轮。',
+    description: '派生研究/执行子代理：给它一个自包含的任务问题，它独立完成后返回结论。'
+      + 'read 模式（默认）只用 read/grep/glob 调研；write 模式额外可用 write/edit 修改文件（每次调用需审批）。'
+      + '子代理不能再派生子代理，最多 10 轮，过程实时透传到工具卡。',
     inputSchema: {
       type: 'object',
       properties: {
-        prompt: { type: 'string', description: '研究问题（必须自包含：子代理看不到当前对话历史）' },
+        prompt: { type: 'string', description: '任务问题（必须自包含：子代理看不到当前对话历史）' },
         description: { type: 'string', description: '一句话任务标题（展示用，可选）' },
+        mode: { type: 'string', enum: ['read', 'write'], description: 'read=只读调研（默认）；write=可写执行' },
       },
       required: ['prompt'],
     },
   },
-  argSummary: i => str(i.description) || str(i.prompt).slice(0, 60),
+  argSummary: i => `${str(i.mode) === 'write' ? '✏️' : '📖'} ${str(i.description) || str(i.prompt).slice(0, 50)}`,
   async run(input, ctx) {
     if (!ctx.spawnTask) throw new Error('task 工具在此环境不可用（子代理不能再派生子代理）');
-    return ctx.spawnTask(str(input.prompt));
+    const mode = str(input.mode) === 'write' ? 'write' : 'read';
+    return ctx.spawnTask(str(input.prompt), { mode });
   },
 };
 
