@@ -107,6 +107,11 @@
   }
 }
 
+/* #69：布局与字体变量。修复：这个块从 P0 起就丢失了 `:root {` 选择器头——
+   全部声明裸露在花括号外，浏览器按孤儿声明丢弃（esbuild 的 css warning 一直在报这事）。
+   --sidebar-w/--topbar-h/--statusbar-h 因此从未生效，是侧栏宽度不可控、
+   grid 行高退化、页面 8px 偏移的共同根因 */
+:root {
   /* 等宽字体栈：中英文混排等宽 + Nerd 图标兜底 */
   --mono: "Maple Mono NF CN", "JetBrains Mono", "Cascadia Code",
           "PingFang SC", "Microsoft YaHei", monospace;
@@ -144,7 +149,9 @@ body {
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
+  /* 中间行必须 minmax(0,1fr)：grid item 默认 min-height:auto（=内容高），
+     1fr 会被长内容撑爆 → 视口裁切、滚动条永不出现（#69 根因） */
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--statusbar-h);
   grid-template-areas:
     "sidebar topbar"
     "sidebar main"
@@ -218,7 +225,15 @@ body {
   display: flex; flex-direction: column;
   background: var(--bg-1);
   border-right: 1px solid var(--border);
+  position: relative;      /* resizer 的定位上下文 */
+  min-height: 0;           /* #69：跨三行的 grid item，同 min-height:auto 陷阱 */
 }
+/* #69：侧栏右缘拖拽调宽（180~480px，localStorage 记忆） */
+.sidebar-resizer {
+  position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 10;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent-soft); }
 .brand {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 16px 10px;
@@ -242,8 +257,7 @@ body {
 .nav-item.active { background: var(--accent-soft); color: var(--accent); }
 .nav-item .ico { width: 18px; text-align: center; }
 
-.section-title {
-  padding: 14px 16px 6px;
+.section-title {  padding: 14px 16px 6px;
   font-size: 11px; color: var(--text-2);
   text-transform: uppercase; letter-spacing: 1px;
   display: flex; align-items: center; justify-content: space-between;
@@ -258,6 +272,18 @@ body {
   padding: 1px 5px; border-radius: var(--radius-s); user-select: none;
 }
 .section-title .filter:hover { color: var(--accent); background: var(--bg-2); }
+
+/* #69：会话列表分段切换（最近 | 归档）——归档入口从隐形小图标变显眼控件 */
+.seg-tabs {
+  display: flex; gap: 2px; margin: 10px 10px 4px;
+  background: var(--bg-2); border-radius: var(--radius-s); padding: 2px;
+}
+.seg-tab {
+  flex: 1; text-align: center; font-size: 12px; padding: 4px 0;
+  border-radius: 4px; color: var(--text-2); cursor: pointer; user-select: none;
+}
+.seg-tab:hover { color: var(--text-0); }
+.seg-tab.active { background: var(--bg-0); color: var(--accent); font-weight: 600; }
 
 /* M7B：工作区选择器（仅多工作区时显示） */
 .ws-picker { display: flex; align-items: center; gap: 6px; margin: 2px 0 10px; padding: 0 10px; }
@@ -286,7 +312,7 @@ body {
 .sub-proc .approval.sub-node .head { padding: 6px 10px; font-size: 12px; }
 .sub-proc .approval.sub-node .actions { padding: 0 10px 8px; }
 
-.sessions { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
+.sessions { flex: 1; overflow-y: auto; padding: 0 8px 10px; min-height: 0; }
 .session {
   position: relative;
 }
@@ -327,8 +353,8 @@ body {
 .sidebar-foot .who { font-size: 12.5px; color: var(--text-1); flex: 1; }
 
 /* ========== 主区 ========== */
-.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; }
-.chat-scroll { flex: 1; overflow-y: auto; padding: 24px 0 12px; }
+.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-scroll { flex: 1; overflow-y: auto; padding: 24px 0 12px; min-height: 0; }
 .chat-col { max-width: 860px; margin: 0 auto; padding: 0 28px; display: flex; flex-direction: column; gap: 20px; }
 
 /* 消息 */
@@ -493,7 +519,7 @@ body {
 .statusbar .spacer { flex: 1; }
 
 /* ========== 页面：插件市场 / 设置 ========== */
-.page { grid-area: main; overflow-y: auto; padding: 28px 36px; }
+.page { grid-area: main; overflow-y: auto; padding: 28px 36px; min-height: 0; }
 .page h1 { font-size: 20px; margin-bottom: 4px; }
 .page .sub { color: var(--text-1); font-size: 13px; margin-bottom: 22px; }
 
