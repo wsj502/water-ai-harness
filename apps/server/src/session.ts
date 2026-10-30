@@ -53,6 +53,8 @@ export class Session {
   /** M1：会话级模型覆盖（null = 跟随服务端默认） */
   protocol: SessionProtocol | null = null;
   model: string | null = null;
+  /** M7A：归档（从「最近会话」收起；历史可看，不可再发消息） */
+  archived = false;
   /** 会话级 token 累计（侧栏「12.4k tok」的真实数据源） */
   tokensIn = 0;
   tokensOut = 0;
@@ -120,6 +122,7 @@ export class SessionStore {
       s.messages = r.messages;
       s.protocol = r.protocol === 'anthropic' || r.protocol === 'openai' ? r.protocol : null;
       s.model = r.model ?? null;
+      s.archived = Boolean(r.archived);
       this.sessions.set(r.id, s);
     }
     // 恢复任务记录（running 态只存在于内存；若落库盘里出现，说明上次进程被杀 → 记为中断）
@@ -172,7 +175,7 @@ export class SessionStore {
   save(s: Session): void {
     try {
       this.persistence?.saveSession(s.id, s.title, s.createdAt, s.messages, {
-        protocol: s.protocol, model: s.model,
+        protocol: s.protocol, model: s.model, archived: s.archived,
       });
     } catch (e) {
       console.error(`[persistence] 会话 ${s.id} 落库失败:`, e instanceof Error ? e.message : e);
@@ -187,15 +190,16 @@ export class SessionStore {
 
   get(id: string): Session | undefined { return this.sessions.get(id); }
 
-  list() {
+  list(archived = false) {
     return [...this.sessions.values()]
+      .filter(s => s.archived === archived)
       .sort((a, b) => b.createdAt - a.createdAt)
       .map(s => ({
         id: s.id, title: s.title, createdAt: s.createdAt,
         turns: s.messages.filter(m => m.role === 'user').length,
         tokensIn: s.tokensIn, tokensOut: s.tokensOut,
         busy: s.busy, pendingApprovals: s.pendingCount,
-        protocol: s.protocol, model: s.model,
+        protocol: s.protocol, model: s.model, archived: s.archived,
       }));
   }
 }

@@ -171,12 +171,16 @@ app.get('/api/models', c => c.json({
 }));
 
 /** 校验并应用会话级配置（建会话与 PATCH 共用）。返回错误信息或 null */
-function applySessionConfig(s: Session, body: { protocol?: unknown; model?: unknown; reset?: unknown; [k: string]: unknown }): string | null {
+function applySessionConfig(s: Session, body: { protocol?: unknown; model?: unknown; reset?: unknown; archived?: unknown; [k: string]: unknown }): string | null {
   // 严格字段白名单：baseUrl 等只能来自服务端配置（防 key 外泄通道），越权字段显式 400 而非静默忽略
   for (const k of Object.keys(body)) {
-    if (k !== 'protocol' && k !== 'model' && k !== 'reset') {
+    if (k !== 'protocol' && k !== 'model' && k !== 'reset' && k !== 'archived') {
       return `不支持的配置字段: ${k}（baseUrl 等只能由服务端配置；Web 仅可从注册表选择模型）`;
     }
+  }
+  if (body.archived !== undefined) {
+    if (typeof body.archived !== 'boolean') return 'archived 必须是 boolean';
+    s.archived = body.archived;
   }
   if (body.reset === true) { s.protocol = null; s.model = null; return null; }
   let protocol: SessionProtocol | null = null;
@@ -212,7 +216,9 @@ app.get('/api/permissions', c => c.json({
   })),
 }));
 
-app.get('/api/sessions', c => c.json({ sessions: store.list() }));
+app.get('/api/sessions', c => c.json({
+  sessions: store.list(c.req.query('archived') === '1'),
+}));
 
 /** 插件清单：名称/版本/权限/注册物/加载错误 */
 app.get('/api/plugins', c => c.json({
@@ -352,6 +358,7 @@ app.post('/api/sessions/:id/messages', async c => {
   const s = store.get(c.req.param('id'));
   if (!s) return c.json({ error: 'session not found' }, 404);
   if (s.busy) return c.json({ error: '会话忙：上一条消息还在处理' }, 409);
+  if (s.archived) return c.json({ error: '会话已归档：历史可查看；如需继续对话请先取消归档' }, 400);
 
   const body = await c.req.json<{ text?: string }>().catch(() => null);
   if (!body?.text?.trim()) return c.json({ error: '需要合法 JSON 且 text 不能为空' }, 400);
