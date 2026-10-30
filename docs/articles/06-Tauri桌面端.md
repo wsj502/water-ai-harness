@@ -92,3 +92,18 @@ CORS 已由 server 的 `cors()` 中间件放行。
 | 两个 `tauri dev` 并行 → `app.exe` 文件锁（os error 5） | 单实例开发；或先杀残留进程 |
 | SEA 顶层 await 无法打 CJS | server 入口包 `main()`，TLA 下沉 |
 | postject 报 sentinel 不存在 | **Node 24 换了保险丝字符串**：旧文档 `...b19903b2` → 实际 `...df1996b2`；且部分第三方 node 发行版剥掉了保险丝，必须用官方 node.exe 做基座 |
+
+## v0.3 深化补遗：SEA sidecar 实测数据与已知坑
+
+**体积与启动（Windows 实测，v0.2 基线）**：
+
+- SEA sidecar 单文件 ≈ 40MB（含 node 运行时 + server bundle）；
+  MSI 安装包 24~36MB（压缩后）；对比 Electron 同类壳 80MB+ 起步
+- sidecar 冷启动 < 1s（本机），Tauri 窗口出现即可用
+
+**已知坑（持续登记于 PITFALLS）**：postject 注入后部分杀软误报（未签名）；
+wix 打包中文路径偶发失败（CI 上用英文路径规避）；sidecar 崩溃后 Tauri
+侧的拉起重试尚未做（遗留）。
+
+**选型回望**：Tauri 的代价是 Rust 工具链与 sidecar 双进程管理；换来的是
+10MB 级壳、原生 WebView、和"Web 代码零改动"——对学习项目，这个交换比极高。

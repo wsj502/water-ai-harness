@@ -110,3 +110,16 @@ npm publish --access restricted   # 私仓/受限发布（本项目为学习用�
 
 **下一步（P3）**：Server + Web——内核前面已经有 CLI 一个消费者了，
 现在加第二个消费者（HTTP+SSE 服务），验证「三端共用内核」的架构假设。→ 文章 03/05（待写）
+
+## v0.3 深化补遗：命令对齐与 readline 丢行坑
+
+**M10 后 CLI 的完整形态**：`/model`（注册表清单+切换）、`/compact`、`/system`、`/help`，
+未知命令显式拦截——与 Web 端命令语义一一对应（同一套注册表与预算规则）。
+
+**踩坑实录（值得每个写 Node CLI 的人知道）**：`rl.question()` 只消费注册之后到达的
+line 事件。交互式使用无感（人打字永远比提问慢），但管道/文件 stdin 下，两次提问
+之间到达的行**直接蒸发**——表现为"只处理第一条命令"。修法：事件驱动 + 行缓存队列
+（见 `chat.ts` 的 ask 实现）。测试 CLI 的标准姿势：`commands.txt | node dist/index.js chat`。
+
+**双形态取舍**：npm bin（跨平台、需 Node 环境）与 SEA 单文件 sidecar（桌面端内嵌、
+免运行时）。CLI 包体小走 bin，桌面端走 SEA——同一份代码两种交付，构建脚本各司其职。
