@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
+v0.4.0 主题：**子代理全能力（流式+可写）、配置式扩展、会话消息排队**。
+
 ### 新增（M14 · 会话消息排队）
 
 - busy 不再 409：新消息**自动排队**——Session 维护 promise 链闸门（`enqueueTurn`），按到达顺序串行执行；排队请求先收 `queued` 事件（含位置，瞬时事件不进回放缓冲）
@@ -180,7 +184,8 @@ v0.2.0 主题：**从「学习骨架」到「按公开标准运营的开源项�
 - 凭据全程 DPAPI 加密存储 + 进程内存注入，明文永不落盘/入库
 - `config.json` 禁止出现任何凭据字段（读取时主动扫描拒绝）
 
-[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/wsj502/water-ai-harness/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/wsj502/water-ai-harness/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wsj502/water-ai-harness/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/wsj502/water-ai-harness/releases/tag/v0.1.0
