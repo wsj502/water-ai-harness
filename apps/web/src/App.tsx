@@ -56,9 +56,20 @@ export default function App() {
     api.listPlugins().then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
   }, []);
 
-  // 自动滚到底部
+  // #69：打开/切换会话 → 直达底部
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activeId]);
+
+  // 自动滚动 → 智能吸底（#69）：仅当已在底部附近（<120px）才跟随新内容——
+  // 上翻阅读历史/长工具输出时不被强行拉回底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [blocks]);
 
   const openSession = useCallback(async (id: string) => {
@@ -427,6 +438,40 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
   effWsId: string;
 }) {
   const wsName = config?.workspace.split(/[\\/]/).filter(Boolean).pop() ?? '';
+
+  // #69：侧栏拖拽调宽——右缘手柄 mousedown 拖动，实时改 --sidebar-w（180~480），localStorage 记忆
+  const SIDEBAR_MIN = 180, SIDEBAR_MAX = 480, SIDEBAR_DEFAULT = 264;
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('water-sidebar-w'));
+    return saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX ? saved : SIDEBAR_DEFAULT;
+  });
+  const draggingRef = useRef(false);
+  const latestW = useRef(sidebarW);          // onUp 闭包读最新宽度（避免 stale state 落后一轮）
+  const applyW = (w: number) => {
+    latestW.current = w;
+    setSidebarW(w);
+    document.documentElement.style.setProperty('--sidebar-w', `${w}px`);
+  };
+  // 挂载时恢复记忆宽度（localStorage → :root）
+  useEffect(() => { applyW(sidebarW); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      e.preventDefault();
+      applyW(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX)));
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('water-sidebar-w', String(latestW.current));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, []);
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -453,14 +498,15 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
         <a className={`nav-item${view === 'workspace' ? ' active' : ''}`} onClick={() => onNav('workspace')}><span className="ico">🗂</span>工作区</a>
         <a className={`nav-item${view === 'settings' ? ' active' : ''}`} onClick={() => onNav('settings')}><span className="ico">⚙</span>设置</a>
       </nav>
+      <div className="seg-tabs" role="tablist" aria-label="会话过滤">
+        <span role="tab" aria-selected={!archivedView} className={`seg-tab${!archivedView ? ' active' : ''}`}
+          title="最近会话（可对话）" onClick={() => onFilter(false)}>会话</span>
+        <span role="tab" aria-selected={archivedView} className={`seg-tab${archivedView ? ' active' : ''}`}
+          title="归档会话（可看不可发）" onClick={() => onFilter(true)}>📦 归档</span>
+      </div>
       <div className="section-title">
-        {archivedView ? '📦 归档' : '最近会话'}
-        {archivedView
-          ? <span className="new" title="返回最近会话" onClick={() => onFilter(false)}>↩</span>
-          : <>
-            <span className="filter" title="查看归档会话" onClick={() => onFilter(true)}>📦</span>
-            <span className="new" title="新建会话" onClick={onNew}>＋</span>
-          </>}
+        {archivedView ? '归档会话（可看不可发）' : '最近会话'}
+        {!archivedView && <span className="new" title="新建会话" onClick={onNew}>＋</span>}
       </div>
       <div className="sessions">
         {sessions.map(s => (
@@ -495,6 +541,17 @@ function Sidebar({ sessions, activeId, view, config, onOpen, onNew, onNav, archi
         <div className="who">{wsName || 'admin@local'}</div>
         <span style={{ color: 'var(--text-2)', fontSize: 11 }}>{config?.protocol === 'mock' ? '离线模式' : '在线'}</span>
       </div>
+      <div
+        className="sidebar-resizer"
+        title="拖拽调整侧栏宽度（180–480px）"
+        onMouseDown={e => {
+          e.preventDefault();
+          draggingRef.current = true;
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+        }}
+        onDoubleClick={() => { applyW(SIDEBAR_DEFAULT); localStorage.setItem('water-sidebar-w', String(SIDEBAR_DEFAULT)); }}
+      />
     </aside>
   );
 }
