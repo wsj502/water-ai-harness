@@ -5,11 +5,13 @@ import { api, type PluginInfo } from '../api';
 export function PluginsView() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [configCommands, setConfigCommands] = useState<Array<{ name: string; description?: string }>>([]);
+  const [configTools, setConfigTools] = useState<Array<{ name: string; description: string; hasParameters: boolean }>>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api.listPlugins().then(setPlugins).catch(e => setError(String(e)));
     api.configCommands().then(setConfigCommands).catch(() => {});
+    api.configTools().then(setConfigTools).catch(() => {});
   }, []);
 
   return (
@@ -57,7 +59,22 @@ export function PluginsView() {
             <div className="foot"><div className="perms"><span className="perm safe">无执行逻辑</span></div></div>
           </div>
         )}
-        {plugins.length === 0 && configCommands.length === 0 && !error && (
+        {configTools.length > 0 && (
+          <div className="plugin-card">
+            <div className="top">
+              <div className="pico">🔧</div>
+              <div className="pname">配置式工具<span className="at">~/.water/config.json</span></div>
+            </div>
+            <div className="pdesc">配置即插件进阶（M17）：声明 JSON Schema 的工具直接进注册表——prompt 型执行（模板 $参数 替换），模型可自主调用</div>
+            <div className="pmeta">
+              {configTools.map(t => (
+                <span key={t.name} title={t.description}>{t.name}{t.hasParameters ? '()' : ''}</span>
+              ))}
+            </div>
+            <div className="foot"><div className="perms"><span className="perm safe">零执行逻辑</span></div></div>
+          </div>
+        )}
+        {plugins.length === 0 && configCommands.length === 0 && configTools.length === 0 && !error && (
           <div style={{ color: 'var(--text-2)' }}>未发现插件（plugins/ 目录或 ~/.water/plugins）</div>
         )}
       </div>

@@ -43,6 +43,19 @@ export class MockProvider implements Provider {
       yield { type: 'done', stopReason: 'tool_use' };
       return;
     }
+    // M17 场景剧本：[[mock:m17tool:<工具名>]] 让 mock 调用指定的（配置式声明）工具
+    const m17 = userText.match(/\[\[mock:m17tool:([A-Za-z0-9_-]+)\]\]/);
+    if (m17 && !hasToolResult) {
+      const toolName = m17[1]!;
+      if (!req.tools?.some(t => t.name === toolName)) {
+        yield { type: 'text_delta', text: `（mock）工具清单中没有 ${toolName}` };
+        yield { type: 'done', stopReason: 'end' };
+        return;
+      }
+      yield { type: 'tool_use', call: { type: 'tool_use', id: 'mock-m17-call', name: toolName, input: { text: 'hello-m17' } } };
+      yield { type: 'done', stopReason: 'tool_use' };
+      return;
+    }
     if (!hasToolResult) {
       yield { type: 'thinking_delta', text: '（mock）先看看工作区结构…' };
       yield { type: 'text_delta', text: '我先列一下工作区文件。' };

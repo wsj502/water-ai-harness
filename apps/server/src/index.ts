@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
-  agentLoop, builtinTools, compactMessages, createProvider, estimateMessagesTokens, loadPlugins,
+  agentLoop, builtinTools, compactMessages, configToolToTool, createProvider, estimateMessagesTokens, loadPlugins,
   loadFileConfig, MockProvider, ProviderRegistry, resolveConfig, BUILTIN_MODELS, mergeModels,
   PROTOCOL_DEFAULTS, PROTOCOL_LABEL,
   type PluginRegistry, type Provider, type ToolUsePart,
@@ -162,7 +162,14 @@ const app = new Hono();
 
 // 插件注册表在 main() 里异步加载（避免顶层 await，兼容 CJS/SEA 打包）
 let plugins: PluginRegistry = { plugins: [], tools: [], commands: [], hooks: [] };
-let allTools = [...builtinTools];
+// M17：配置式声明工具（prompt 型）——config.json tools[] 直接进注册表；重名即拒（启动期暴露）
+const configToolWrappers = (fileCfg.tools ?? []).map(configToolToTool);
+for (const t of configToolWrappers) {
+  const clash = builtinTools.some(b => b.spec.name === t.spec.name)
+    || configToolWrappers.some(o => o !== t && o.spec.name === t.spec.name);
+  if (clash) throw new Error(`配置式工具名冲突: ${t.spec.name}（不能与内置或其他声明重名）`);
+}
+let allTools = [...builtinTools, ...configToolWrappers];
 
 app.use('/api/*', cors());
 
@@ -265,6 +272,12 @@ app.get('/api/plugins', c => c.json({
   configCommands: (fileCfg.commands ?? []).map(c => ({
     name: `/${c.name}`,
     ...(c.description ? { description: c.description } : {}),
+  })),
+  // M17：配置式声明工具清单（prompt 型：模板 $参数 替换，零执行逻辑）
+  configTools: (fileCfg.tools ?? []).map(t => ({
+    name: t.name,
+    description: t.description,
+    hasParameters: Boolean(t.parameters),
   })),
 }));
 
@@ -525,8 +538,9 @@ app.post('/api/sessions/:id/messages', async c => {
     };
 
     // 任务记录：Loop 开始即建档（任务页可见「运行中」），结束时更新为终态并落库
+    // id 带随机后缀：M16 会话间并行后同毫秒完成不再撞 tasks 主键（issue #43）
     const task: TaskRecord = {
-      id: `t_${Date.now().toString(36)}`,
+      id: `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       sessionId: s.id, title: s.title,
       startedAt: Date.now(), finishedAt: 0, status: 'running',
       steps: [], tokensIn: 0, tokensOut: 0,
@@ -595,7 +609,7 @@ if (existsSync(webDist)) {
 async function main(): Promise<void> {
   // 插件加载（启动时一次；开发期重启即重载）
   plugins = await loadPlugins(cfg.cwd);
-  allTools = [...builtinTools, ...plugins.tools];
+  allTools = [...builtinTools, ...configToolWrappers, ...plugins.tools];
 
   serve({ fetch: app.fetch, port }, info => {
     console.log(`water server · http://127.0.0.1:${info.port} · ${mock ? 'MOCK 模式' : `${cfg.model} via ${cfg.protocol}`} · 工作区 ${cfg.cwd}`);

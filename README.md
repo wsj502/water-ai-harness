@@ -81,10 +81,10 @@ flowchart LR
 | SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话 |
 | Web 体验 | ✅ | 零依赖 markdown 渲染（XSS 架构免疫）、行级 diff、子代理过程直播、五页视图 |
 | 三端 | ✅ | CLI（`/model` `/compact` `/system`）/ Web / Tauri 桌面（SEA sidecar 单文件） |
-| 插件与扩展 | ✅ | 进程内 ESM + manifest 权限治理 + **MCP 多 server（mcpServers{} 业界形状）** + **配置式命令（零代码）** |
+| 插件与扩展 | ✅ | 进程内 ESM + manifest 权限治理 + **MCP 多 server（mcpServers{} 业界形状）** + **配置式命令（零代码）** + **配置式声明工具（M17：JSON Schema 声明直接注册，prompt 型模板执行）** |
 | SYSTEM 可配 | ✅ | env > config.json > 默认；各工作区自己的 AGENTS.md |
 | 持久化 | ✅ | node:sqlite 零依赖；会话/任务/归档/工作区绑定落库重启恢复 |
-| 测试 | ✅ | vitest 68 用例（协议 golden/上下文/子代理/摘要/渲染 XSS/排队闸门/子级审批/跨会话闸门/时间线折叠，**源码别名解耦构建产物**）+ 离线 E2E 68 断言，双平台 CI |
+| 测试 | ✅ | vitest 73 用例（协议 golden/上下文/子代理/摘要/渲染 XSS/排队闸门/子级审批/跨会话闸门/时间线折叠/配置式工具，**源码别名解耦构建产物**）+ 离线 E2E 73 断言，双平台 CI |
 | Docker 交付 | ✅ | 多阶段镜像 + 单进程静态托管形态 |
 
 ## 目录结构
