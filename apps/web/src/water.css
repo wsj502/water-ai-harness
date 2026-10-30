@@ -271,10 +271,20 @@ body {
 }
 .sub-proc .label { cursor: pointer; font-size: 11.5px; color: var(--text-2); user-select: none; }
 .sub-proc[open] .label { margin-bottom: 6px; }
-.sub-proc .sub-tools { display: flex; flex-wrap: wrap; gap: 4px; }
-.sub-proc .sub-tools .chip { font-size: 11px; }
-.sub-proc .sub-tools .chip.ok { color: var(--green); }
-.sub-proc .sub-tools .chip.deny { color: var(--red); }
+/* M18 子代理时间线：轮次分组 + 缩进嵌套 */
+.sub-proc .sub-timeline { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.sub-proc .sub-turn { border-left: 2px solid rgba(128, 128, 128, 0.35); padding-left: 10px; display: flex; flex-direction: column; gap: 4px; }
+.sub-proc .sub-turn-head { font-size: 10.5px; color: var(--text-2); letter-spacing: 0.05em; user-select: none; }
+.sub-proc .sub-node { font-size: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.sub-proc .sub-node.sub-text { white-space: pre-wrap; color: var(--text-1); display: block; }
+.sub-proc .sub-node .chip { font-size: 11px; }
+.sub-proc .sub-node .chip.ok { color: var(--green); }
+.sub-proc .sub-node .chip.deny { color: var(--red); }
+.sub-proc .sub-node .sub-arg { color: var(--text-2); }
+.sub-proc .sub-node .sub-result { flex-basis: 100%; color: var(--text-2); font-size: 11px; white-space: pre-wrap; max-height: 3.2em; overflow: hidden; }
+.sub-proc .approval.sub-node { display: block; margin: 2px 0; }
+.sub-proc .approval.sub-node .head { padding: 6px 10px; font-size: 12px; }
+.sub-proc .approval.sub-node .actions { padding: 0 10px 8px; }
 
 .sessions { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
 .session {

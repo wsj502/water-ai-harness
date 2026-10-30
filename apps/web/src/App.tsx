@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent, type WorkspaceInfo } from './api';
-import { applyEvent, hydrateBlocks, type UiBlock } from './state/blocks';
+import { applyEvent, argSummary, hydrateBlocks, type UiBlock } from './state/blocks';
 import { Md } from './Md';
 import { diffStats, lineDiff } from './diff';
 import { PluginsView } from './views/PluginsView';
@@ -540,26 +540,22 @@ const TOOL_ICON: Record<string, string> = {
   read: '📖', grep: '🔍', glob: '🗂', edit: '✏️', write: '📝', shell: '💻', task: '🤖',
 };
 
-/** 参数摘要：展示主参数而非整个 JSON（原型工具卡头部样式） */
-function argSummary(name: string, input: Record<string, unknown>): string {
-  const s = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
-  switch (name) {
-    case 'read': case 'edit': case 'write': return s(input.path ?? '');
-    case 'glob': return s(input.pattern ?? '');
-    case 'grep': {
-      const inc = input.include ? ` include="${s(input.include)}"` : '';
-      return `pattern="${s(input.pattern ?? '')}"${inc}`;
-    }
-    case 'shell': return s(input.command ?? '');
-    case 'task': return s(input.description ?? '') || `研究：${s(input.prompt ?? '').slice(0, 40)}`;
-    default: return JSON.stringify(input).slice(0, 120);
-  }
-}
-
 function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool' }>; sessionId: string | null }) {
   const [decided, setDecided] = useState(false);
   const [decidedSub, setDecidedSub] = useState<string[]>([]);
+  const subRef = useRef<HTMLDetailsElement>(null);
   const { call, status } = block;
+
+  // M18 时间线：轮次分组 + 节点统计 + 待审批项（审批到来时自动展开折叠区，但绝不强制收起）
+  const timeline = block.subTimeline ?? [];
+  const subToolCount = timeline.reduce((n, t) => n + t.nodes.filter(x => x.kind === 'tool').length, 0);
+  const waitingApprovals = timeline.flatMap(t =>
+    t.nodes.filter((x): x is Extract<typeof x, { kind: 'approval' }> => x.kind === 'approval' && x.status === 'waiting'));
+  const wasWaiting = useRef(false);
+  useEffect(() => {
+    if (waitingApprovals.length > 0 && !wasWaiting.current) subRef.current?.setAttribute('open', '');
+    wasWaiting.current = waitingApprovals.length > 0;
+  }, [waitingApprovals.length]);
 
   const badge =
     status === 'running' ? <span className="badge run pulse">执行中</span>
@@ -628,55 +624,64 @@ function ToolCard({ block, sessionId }: { block: Extract<UiBlock, { kind: 'tool'
           )}
         </div>
       )}
-      {/* M15：子级审批（嵌套在 sub_event 里的 approval_required）——置于折叠区外，需要用户行动 */}
-      {call.name === 'task' && (block.subApprovals?.length ?? 0) > 0 && (
-        <div style={{ marginTop: 6 }}>
-          {block.subApprovals!.map(a => {
-            const acted = a.status !== 'waiting' || decidedSub.includes(a.fullId);
-            return (
-              <div key={a.fullId} className="approval" style={{ margin: '6px 0' }}>
-                <div className="head">
-                  <span className="ico">{a.status === 'denied' ? '⛔' : acted ? '✅' : '⚠'}</span>
-                  <span className="name">子级 {a.name}</span>
-                  <span className="arg">{a.summary}</span>
-                  {a.status === 'waiting' && !decidedSub.includes(a.fullId)
-                    ? <span className="badge wait">等待审批</span>
-                    : <span className={`badge ${a.status === 'denied' ? 'deny' : 'ok'}`}>
-                      {a.status === 'denied' ? '已拒绝' : a.status === 'approved' ? '已批准' : '已提交…'}
-                    </span>}
-                </div>
-                {!acted && (
-                  <div className="actions" style={{ paddingBottom: 12 }}>
-                    <button className="btn primary" onClick={() => decideSub(a.fullId, 'once')}>允许一次</button>
-                    <button className="btn danger" onClick={() => decideSub(a.fullId, 'deny')}>拒绝</button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {/* M12：子代理过程（实时透传的 sub_event 折叠记录） */}
-      {call.name === 'task' && (block.subText || (block.subTools?.length ?? 0) > 0) && (
-        <details className="sub-proc">
+      {/* M18：子代理时间线（轮次分组 · 缩进嵌套 · 状态着色；M15 子级审批是时间线内的一等节点） */}
+      {call.name === 'task' && timeline.length > 0 && (
+        <details className="sub-proc" ref={subRef}>
           <summary className="label">
-            🤖 子代理过程{block.subTurns ? `（${block.subTurns} 轮）` : ''}
-            {(block.subTools?.length ?? 0) > 0 ? ` · ${block.subTools!.length} 次工具调用` : ''}
+            🤖 子代理过程（{timeline.length} 轮{subToolCount > 0 ? ` · ${subToolCount} 次工具` : ''}
+            {waitingApprovals.length > 0 ? ` · ⚠ ${waitingApprovals.length} 项待审批` : ''}）
           </summary>
-          {block.subTools && block.subTools.length > 0 && (
-            <div className="sub-tools">
-              {block.subTools.map((t, i) => (
-                <span key={i} className={`chip ${t.ok === true ? 'ok' : t.ok === false ? 'deny' : ''}`}>
-                  {TOOL_ICON[t.name] ?? '⚙'} {t.name}{t.ok === false ? ' ✕' : t.ok === null ? ' ⛔' : ''}
-                </span>
-              ))}
-            </div>
-          )}
-          {block.subText && (
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 6, color: 'var(--text-1)' }}>
-              {block.subText.slice(0, 600)}{block.subText.length > 600 ? '…' : ''}
-            </div>
-          )}
+          <div className="sub-timeline">
+            {timeline.map((t, ti) => (
+              <div className="sub-turn" key={ti}>
+                <div className="sub-turn-head">第 {t.turn} 轮</div>
+                {t.nodes.map((n, ni) => {
+                  if (n.kind === 'text') {
+                    return (
+                      <div className="sub-node sub-text" key={ni}>
+                        {n.text.slice(0, 400)}{n.text.length > 400 ? '…' : ''}
+                      </div>
+                    );
+                  }
+                  if (n.kind === 'tool') {
+                    return (
+                      <div className="sub-node" key={ni}>
+                        <span className={`chip ${n.status === 'done' ? 'ok' : n.status === 'error' || n.status === 'denied' ? 'deny' : ''}`}>
+                          {TOOL_ICON[n.name] ?? '⚙'} {n.name}
+                          {n.status === 'running' ? ' …' : n.status === 'error' ? ' ✕' : n.status === 'denied' ? ' ⛔' : ''}
+                        </span>
+                        <span className="sub-arg">{n.summary}</span>
+                        {n.result && (
+                          <span className="sub-result">{n.result.slice(0, 160)}{n.result.length > 160 ? '…' : ''}</span>
+                        )}
+                      </div>
+                    );
+                  }
+                  const acted = n.status !== 'waiting' || decidedSub.includes(n.fullId);
+                  return (
+                    <div className="approval sub-node" key={ni}>
+                      <div className="head">
+                        <span className="ico">{n.status === 'denied' ? '⛔' : acted ? '✅' : '⚠'}</span>
+                        <span className="name">子级 {n.name}</span>
+                        <span className="arg">{n.summary}</span>
+                        {n.status === 'waiting' && !decidedSub.includes(n.fullId)
+                          ? <span className="badge wait">等待审批</span>
+                          : <span className={`badge ${n.status === 'denied' ? 'deny' : 'ok'}`}>
+                            {n.status === 'denied' ? '已拒绝' : n.status === 'approved' ? '已批准' : '已提交…'}
+                          </span>}
+                      </div>
+                      {!acted && (
+                        <div className="actions" style={{ paddingBottom: 8 }}>
+                          <button className="btn primary" onClick={() => decideSub(n.fullId, 'once')}>允许一次</button>
+                          <button className="btn danger" onClick={() => decideSub(n.fullId, 'deny')}>拒绝</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </details>
       )}
       {status === 'done' && block.result && (

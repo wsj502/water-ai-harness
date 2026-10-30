@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parseInline, parseMarkdown } from '../apps/web/src/markdown';
 import { diffStats, lineDiff } from '../apps/web/src/diff';
 import { applyEvent, type UiBlock } from '../apps/web/src/state/blocks';
+import type { ServerEvent } from '../apps/web/src/api';
 import type { ToolUsePart } from '@water/core';
 
 describe('markdown 块级', () => {
@@ -71,26 +72,53 @@ describe('行级 diff', () => {
   });
 });
 
-describe('子级审批折叠（M15 blocks）', () => {
+describe('子代理时间线折叠（M18 blocks）', () => {
   const taskCall: ToolUsePart = { type: 'tool_use', id: 't1', name: 'task', input: { mode: 'write' } };
   const subWrite: ToolUsePart = { type: 'tool_use', id: 'w1', name: 'write', input: { path: 'a.txt' } };
   const toolBlock = (bs: UiBlock[]) => bs[0] as Extract<UiBlock, { kind: 'tool' }>;
 
-  it('嵌套 approval_required → waiting 卡；tool_approved 收拢为已批准', () => {
-    let bs = applyEvent([], { type: 'tool_pending', call: taskCall });
-    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'turn_start', turn: 1, model: 'm' } });
-    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } });
-    expect(toolBlock(bs).subApprovals).toEqual([{ fullId: 't1:w1', name: 'write', summary: 'a.txt', status: 'waiting' }]);
-    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'tool_approved', call: subWrite, scope: 'once' } });
-    expect(toolBlock(bs).subApprovals![0]).toMatchObject({ fullId: 't1:w1', status: 'approved' });
+  /** M18 场景帧序列：轮1 文本+子工具（审批→获批→落盘），轮2 文本收尾 */
+  const frames: ServerEvent[] = [
+    { type: 'tool_pending', call: taskCall },
+    { type: 'sub_event', callId: 't1', ev: { type: 'turn_start', turn: 1, model: 'm' } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'text_delta', text: '正在处理…' } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'tool_pending', call: subWrite } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'tool_approved', call: subWrite, scope: 'once' } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'tool_result', call: subWrite, result: '已写入 a.txt', isError: false, durationMs: 3 } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'turn_start', turn: 2, model: 'm' } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'text_delta', text: '完成' } },
+    { type: 'sub_event', callId: 't1', ev: { type: 'finish', reason: 'end' } },
+  ];
+  const fold = (evs: ServerEvent[]) => evs.reduce<UiBlock[]>((bs, ev) => applyEvent(bs, ev), []);
+
+  it('轮次分组与节点收拢：文本→工具(running→done)→审批(waiting→approved)→次轮文本', () => {
+    const b = toolBlock(fold(frames));
+    expect(b.subTimeline).toHaveLength(2);
+    const [g1, g2] = b.subTimeline!;
+    expect(g1.turn).toBe(1);
+    expect(g1.nodes.map(n => n.kind)).toEqual(['text', 'tool', 'approval']);
+    expect(g1.nodes[1]).toMatchObject({ kind: 'tool', name: 'write', summary: 'a.txt', status: 'done', result: '已写入 a.txt' });
+    expect(g1.nodes[2]).toMatchObject({ kind: 'approval', fullId: 't1:w1', summary: 'a.txt', status: 'approved' });
+    expect(g2.turn).toBe(2);
+    expect(g2.nodes).toEqual([{ kind: 'text', text: '完成' }]);
   });
 
-  it('tool_denied 收拢为已拒绝，工具 chips 记录 ⛔', () => {
-    let bs = applyEvent([], { type: 'tool_pending', call: taskCall });
-    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } });
-    bs = applyEvent(bs, { type: 'sub_event', callId: 't1', ev: { type: 'tool_denied', call: subWrite } });
-    const b = toolBlock(bs);
-    expect(b.subApprovals![0]).toMatchObject({ status: 'denied' });
-    expect(b.subTools).toEqual([{ name: 'write', ok: null }]);
+  it('拒绝路径：tool_denied → 工具节点 denied、审批节点 denied', () => {
+    const denyFrames: ServerEvent[] = [
+      { type: 'tool_pending', call: taskCall },
+      { type: 'sub_event', callId: 't1', ev: { type: 'turn_start', turn: 1, model: 'm' } },
+      { type: 'sub_event', callId: 't1', ev: { type: 'tool_pending', call: subWrite } },
+      { type: 'sub_event', callId: 't1', ev: { type: 'approval_required', callId: 't1:w1', call: subWrite } },
+      { type: 'sub_event', callId: 't1', ev: { type: 'tool_denied', call: subWrite } },
+    ];
+    const b = toolBlock(fold(denyFrames));
+    const turn = b.subTimeline![0]!;
+    expect(turn.nodes[0]).toMatchObject({ kind: 'tool', status: 'denied' });
+    expect(turn.nodes[1]).toMatchObject({ kind: 'approval', status: 'denied' });
+  });
+
+  it('直播与回放同构：同一帧序列从空折叠两次，结果完全一致（回放 ?since= 重建同一时间线）', () => {
+    expect(fold(frames)).toEqual(fold(frames));
   });
 });
