@@ -108,5 +108,12 @@ export type LoopEvent =
   | { type: 'tool_denied'; call: ToolUsePart }
   | { type: 'tool_result'; call: ToolUsePart; result: string; isError: boolean; durationMs: number }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
-  | { type: 'compacted'; droppedMessages: number; truncatedResults: number; estBefore: number; estAfter: number }
+  | {
+    type: 'compacted'; droppedMessages: number; truncatedResults: number;
+    estBefore: number; estAfter: number;
+    /** M9：压缩方式——truncate=确定性裁剪（M2），summary=LLM 摘要（v2） */
+    method?: 'truncate' | 'summary';
+    /** M9：摘要自身的 token 成本（成本披露） */
+    summaryTokens?: number;
+  }
   | { type: 'finish'; reason: 'end' | 'max_turns' | 'aborted' | 'error'; message?: string };

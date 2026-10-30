@@ -58,7 +58,9 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
     case 'compacted':
       next.push({
         kind: 'notice',
-        text: `🗜 上下文已压缩：${ev.estBefore} → ${ev.estAfter} token（丢弃 ${ev.droppedMessages} 条旧消息${ev.truncatedResults ? `，截断 ${ev.truncatedResults} 条工具结果` : ''}）`,
+        text: ev.method === 'summary'
+          ? `🧠 上下文已摘要压缩：${ev.estBefore} → ${ev.estAfter} token（${ev.droppedMessages} 条旧消息总结为要点${ev.summaryTokens ? `，摘要成本 ${ev.summaryTokens} tok` : ''}）`
+          : `🗜 上下文已压缩：${ev.estBefore} → ${ev.estAfter} token（丢弃 ${ev.droppedMessages} 条旧消息${ev.truncatedResults ? `，截断 ${ev.truncatedResults} 条工具结果` : ''}）`,
         ts: Date.now(),
       });
       break;

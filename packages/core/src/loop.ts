@@ -8,9 +8,9 @@
  * 产出是 LoopEvent 流，UI（CLI/Web/桌面）只消费这条流，不关心厂商协议。
  */
 import type {
-  LoopEvent, Part, Provider, ToolUsePart, WMessage,
+  ChatRequest, LoopEvent, Part, Provider, StreamEvent, ToolUsePart, WMessage,
 } from './types.js';
-import { compactMessages } from './context.js';
+import { compactMessages, estimateMessagesTokens, estimateTokens, renderForSummary, splitForSummary } from './context.js';
 import { PermissionEngine } from './permissions.js';
 import type { Tool, ToolContext } from './tools/index.js';
 import type { PluginHooks } from './plugin/types.js';export interface AgentLoopOptions {
@@ -25,6 +25,8 @@ import type { PluginHooks } from './plugin/types.js';export interface AgentLoopO
   maxTokens?: number;
   /** 上下文 token 预算（超窗触发确定性压缩；缺省不限） */
   maxContextTokens?: number;
+  /** M9：超预算时优先 LLM 摘要压缩（默认开；失败自动回退确定性裁剪） */
+  compactSummarize?: boolean;
   /** 需要用户审批时的回调（CLI/Web 各自实现交互） */
   approve?: (call: ToolUsePart, reason: string) => Promise<'once' | 'session' | 'deny'>;
   /** 插件钩子（P5）：beforeToolCall 返回 false 可阻止执行 */
@@ -63,6 +65,30 @@ function runSubAgent(opts: AgentLoopOptions, prompt: string): Promise<string> {
   })();
 }
 
+const SUMMARY_SYSTEM = [
+  '你是对话压缩器。把给定的对话压缩为要点：保留任务目标、已做的关键决定、',
+  '未完成事项、重要文件路径与结论。直接输出要点（≤300字），不要任何前言。',
+].join('\n');
+
+/** M9：调用当前 provider 生成历史摘要（一次性，maxTokens 受控） */
+async function summarizeHistory(provider: Provider, model: string, messages: WMessage[]): Promise<string> {
+  const req: ChatRequest = {
+    model,
+    messages: [
+      { role: 'system', parts: [{ type: 'text', text: SUMMARY_SYSTEM }] },
+      { role: 'user', parts: [{ type: 'text', text: renderForSummary(messages) }] },
+    ],
+    maxTokens: 512,
+  };
+  let out = '';
+  for await (const ev of provider.chat(req)) {
+    if (ev.type === 'text_delta') out += ev.text;
+    else if (ev.type === 'error') throw ev.error;
+  }
+  if (!out.trim()) throw new Error('摘要为空');
+  return out.trim();
+}
+
 export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEvent> {
   const maxTurns = opts.maxTurns ?? 20;
   const { provider, permissions } = opts;
@@ -79,12 +105,33 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
   for (let turn = 1; turn <= maxTurns; turn++) {
     if (opts.signal?.aborted) { yield { type: 'finish', reason: 'aborted' }; return; }
 
-    // ---- 上下文预算检查（M2）：超窗则确定性压缩，UI 可见 ----
+    // ---- 上下文预算检查（M2/M9）：超窗时先尝试 LLM 摘要，失败回退确定性压缩 ----
     if (opts.maxContextTokens !== undefined) {
+      const estBefore = estimateMessagesTokens(opts.messages);
+      if (estBefore > opts.maxContextTokens && opts.compactSummarize !== false) {
+        const split = splitForSummary(opts.messages);
+        if (split) {
+          try {
+            const summary = await summarizeHistory(opts.provider, opts.model, split.old);
+            opts.messages.length = 0;
+            opts.messages.push(
+              ...split.head,
+              { role: 'user', parts: [{ type: 'text', text: `[此前对话的摘要（上下文管理自动生成）]\n${summary}` }] },
+              ...split.kept,
+            );
+            yield {
+              type: 'compacted', method: 'summary',
+              droppedMessages: split.old.length, truncatedResults: 0,
+              estBefore, estAfter: estimateMessagesTokens(opts.messages),
+              summaryTokens: estimateTokens(summary),
+            };
+          } catch { /* 摘要失败 → 落入下方确定性路径，会话绝不因压缩中断 */ }
+        }
+      }
       const comp = compactMessages(opts.messages, opts.maxContextTokens);
       if (comp.compacted) {
         yield {
-          type: 'compacted',
+          type: 'compacted', method: 'truncate',
           droppedMessages: comp.droppedMessages, truncatedResults: comp.truncatedResults,
           estBefore: comp.estBefore, estAfter: comp.estAfter,
         };

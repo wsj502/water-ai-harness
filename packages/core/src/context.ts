@@ -96,3 +96,41 @@ export function compactMessages(messages: WMessage[], budget: number): CompactRe
   const estAfter = estimateMessagesTokens(messages);
   return { compacted: true, droppedMessages, truncatedResults, estBefore, estAfter };
 }
+
+// ---------- M9：LLM 摘要压缩的结构切分 ----------
+
+export interface SummarySplit {
+  /** 将被摘要替换的旧消息（不含 system） */
+  old: WMessage[];
+  /** system 头 */
+  head: WMessage[];
+  /** 保留的最近完整轮次（从某个 user 消息起，协议合法） */
+  kept: WMessage[];
+}
+
+/**
+ * 切分历史用于摘要压缩：保留 system + 最近 2 个完整轮次（从倒数第二个
+ * user 消息起——保证 kept 首条非 system 是 user，无孤儿 tool_result），
+ * 其余进入摘要。用户消息不足 2 条时返回 null（无可摘要对象）。
+ */
+export function splitForSummary(messages: WMessage[]): SummarySplit | null {
+  const system = messages.filter(m => m.role === 'system');
+  const rest = messages.filter(m => m.role !== 'system');
+  const userIdx = rest.map((m, i) => (m.role === 'user' ? i : -1)).filter(i => i >= 0);
+  if (userIdx.length < 2) return null;
+  const cut = userIdx[userIdx.length - 2]!;
+  if (cut <= 0) return null;
+  return { old: rest.slice(0, cut), head: system, kept: rest.slice(cut) };
+}
+
+/** 把旧消息序列化为适合摘要模型阅读的纯文本 */
+export function renderForSummary(messages: WMessage[]): string {
+  return messages.map(m => {
+    const body = m.parts.map(p => {
+      if (p.type === 'text' || p.type === 'thinking') return p.text;
+      if (p.type === 'tool_use') return `[调用工具 ${p.name}]`;
+      return `[工具结果 ${p.content.slice(0, 120)}]`;
+    }).join(' ');
+    return `${m.role}: ${body}`;
+  }).join('\n');
+}
