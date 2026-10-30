@@ -118,7 +118,10 @@ describe('子代理时间线折叠（M18 blocks）', () => {
     expect(turn.nodes[1]).toMatchObject({ kind: 'approval', status: 'denied' });
   });
 
-  it('直播与回放同构：同一帧序列从空折叠两次，结果完全一致（回放 ?since= 重建同一时间线）', () => {
-    expect(fold(frames)).toEqual(fold(frames));
+  it('直播与回放同构：同一帧序列从空折叠两次，结构完全一致（回放 ?since= 重建同一时间线）', () => {
+    // 剥离 ts（wall-clock 时间戳不属于「结构」）——不剥离的话两次折叠偶发差 1ms，
+    // 本地 Windows 曾侥幸同毫秒通过、CI ubuntu 上翻车：同构断言比结构不比钟表
+    const stripTs = (bs: UiBlock[]) => bs.map(b => ({ ...b, ts: undefined }));
+    expect(stripTs(fold(frames))).toEqual(stripTs(fold(frames)));
   });
 });
