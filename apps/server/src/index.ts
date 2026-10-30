@@ -28,6 +28,7 @@ import {
 } from '@water/core';
 import { SessionStore, type ApprovalDecision, type Session, type SessionProtocol, type TaskRecord, type TaskStep } from './session.js';
 import { SessionPersistence } from './persistence.js';
+import { ParallelGate } from './gate.js';
 import { loadWorkspaces, type WorkspaceInfo } from './workspaces.js';
 
 const cfg = resolveConfig({});
@@ -54,6 +55,10 @@ const registry = new ProviderRegistry(
 );
 
 const mockProvider = new MockProvider();
+
+// M16：全局并行闸门——会话间并行的并发上限（默认 3；WATER_MAX_PARALLEL_SESSIONS 可调）
+const MAX_PARALLEL_SESSIONS = Math.max(1, Number(process.env.WATER_MAX_PARALLEL_SESSIONS) || 3);
+const parallelGate = new ParallelGate(MAX_PARALLEL_SESSIONS);
 
 // ---- SYSTEM prompt（M2）：env WATER_SYSTEM > config.json systemPrompt > 内置默认 ----
 // M7B：AGENTS.md 按工作区加载——SYSTEM 成为「全局基底 + 各工作区项目上下文」的组合
@@ -167,6 +172,8 @@ app.get('/api/config', c => c.json({
   model: cfg.model,
   workspace: cfg.cwd,
   version: '0.4.0',
+  // M16：跨会话并发上限（会话间并行、超限跨会话排队）
+  maxParallelSessions: MAX_PARALLEL_SESSIONS,
   // 只暴露「有没有」，永不暴露 key 本身
   hasKey: mock || Boolean(cfg.apiKey),
   apiKeyEnv: cfg.apiKeyEnv,
@@ -466,6 +473,23 @@ app.post('/api/sessions/:id/messages', async c => {
       return;
     }
 
+    // M16：全局并行闸门——会话级闸门获得后再取全局槽位；跨会话 FIFO 排队
+    const slot = parallelGate.acquire();
+    if (slot.queued) {
+      await stream.writeSSE({
+        event: 'queued',
+        data: JSON.stringify({ type: 'queued', position: slot.position, scope: 'global' }),
+      });
+    }
+    await slot.ready;
+    if (c.req.raw.signal.aborted || store.get(s.id) !== s) {
+      // 全局排队期间断开/会话已被删除：同 M14 语义——跳过执行，释放两级闸门
+      await stream.writeSSE({ event: 'finish', data: JSON.stringify({ type: 'finish', reason: 'aborted' }) });
+      slot.release();
+      turn.release();
+      return;
+    }
+
     s.busy = true;
     s.messages.push({ role: 'user', parts: [{ type: 'text', text }] });
     if (s.title === '新会话') s.title = text.slice(0, 30);
@@ -553,6 +577,7 @@ app.post('/api/sessions/:id/messages', async c => {
       s.denyAllPending();
       store.save(s); // 消息处理结束 → 落库
       turn.release(); // M14：放行下一条排队消息
+      slot.release(); // M16：释放全局槽位（转交给跨会话等待者）
     }
   });
 });

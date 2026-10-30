@@ -17,6 +17,14 @@
 - 兜底不放松：无审批渠道时子级 write/edit 保守拒绝、零落盘（vitest 锁定）；「session」授权记在子级引擎、key=write:<路径>——同文件免重复审批，跨文件/跨子代理不扩散
 - MockProvider 新增标记驱动剧本（`[[mock:m15-task]]` / `[[mock:m15-sub]]`，默认行为不变）——离线 E2E 确定性复现子级审批批准/拒绝双路径
 
+### 新增（M16 · 跨会话并行调度）
+
+- 全局并行闸门 `ParallelGate`（`apps/server/src/gate.ts`）：**会话间并行、会话内串行**（M14 语义不变）；上限 `WATER_MAX_PARALLEL_SESSIONS`（默认 3），超限跨会话 FIFO 排队——持有者释放时槽位直接转交队首（不经历空窗）；排队中放弃只撤回自己的号（不误伤队首）；release 幂等（单测逐项锁定）
+- `queued` 事件新增 `scope: 'session' | 'global'`（向后兼容，缺省即 session）；全局排队期间断开/会话被删除 → 跳过执行、释放两级闸门（沿 M14 语义 + 并发下的悬挂引用防护）
+- `/api/config` 暴露 `maxParallelSessions`；Web 全局排队提示（🌐 跨会话排队，前面 N 个）
+- **并发正确性结论（为什么）**：审批桥 pending、SSE 回放缓冲、任务记录本就按会话实例隔离（本次补单测锁定）；SQLite 落库用 node:sqlite `DatabaseSync` **同步 API——事务在单线程事件循环上天然串行，不存在交错窗口**，无需额外锁；Provider 实例按 (protocol, baseUrl, apiKeyEnv) 缓存共享，per-request 无会话态
+- E2E 并行实证：两会话挂起审批占满 2 槽（busy×2 轮询确认）→ 第三会话收到 `scope=global` 排队帧（**该帧本身就是前两者并行的证据**）→ 放行后三会话全部完成、历史互不污染
+
 ## [0.4.0] - 2026-10-30
 
 v0.4.0 主题：**子代理全能力（流式+可写）、配置式扩展、会话消息排队**。

@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     env: {
       ...process.env, WATER_MOCK: '1', WATER_PORT: String(PORT),
       WATER_WORKSPACES: workdir2, WATER_CONFIG_FILE: cfgFile,
+      WATER_MAX_PARALLEL_SESSIONS: '2',
     },
     cwd: workdir,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -362,6 +363,120 @@ async function main(): Promise<void> {
     ok(readFileSync(path.join(workdir, 'm15-note.txt'), 'utf8') === 'written-by-subagent',
       'M15 拒绝路径：文件未被改写（零落盘增量）');
     ok(evB.at(-1)?.type === 'finish', 'M15 拒绝路径正常 finish（拒绝不致命）');
+
+    // ---- 13. 跨会话并行调度（M16：并行实证 + 全局上限排队）----
+    // 用「挂起审批」占住两个全局槽：A/B 发 m15 剧本但暂不应答审批 → busy×2；
+    // C 再发消息必然全局排队——scope=global 的 queued 帧本身就是 A/B 并行的证据
+    const cfgP = await jfetch<{ maxParallelSessions?: number }>(`${BASE}/api/config`);
+    ok(cfgP.body.maxParallelSessions === 2, '/api/config 暴露全局并发上限（WATER_MAX_PARALLEL_SESSIONS=2）');
+
+    const mkSession = () => jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }).then(r => r.body.id);
+    const [sidPA, sidPB, sidPC] = await Promise.all([mkSession(), mkSession(), mkSession()]);
+
+    let releaseHold!: () => void;
+    const hold = new Promise<void>(r => { releaseHold = r; });
+    /** 收流并在审批到达时先等 hold 再应答 once（主循环与子级审批都答）——挂起即占住全局槽 */
+    const heldStream = async (sid: string): Promise<Array<Record<string, unknown>>> => {
+      const events: Array<Record<string, unknown>> = [];
+      const resp = await fetch(`${BASE}/api/sessions/${sid}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '[[mock:m15-task]] 占住并发槽（M16）' }),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+          if (!data) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(data); } catch { continue; }
+          events.push(ev);
+          const innerApproval = ev.type === 'approval_required'
+            ? ev
+            : ev.type === 'sub_event' && (ev.ev as Record<string, unknown>).type === 'approval_required'
+              ? ev.ev as Record<string, unknown>
+              : null;
+          if (innerApproval) {
+            await hold; // 挂起：占住全局槽直到外部放行
+            await jfetch(`${BASE}/api/sessions/${sid}/approve`, {
+              method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ callId: innerApproval.callId, decision: 'once' }),
+            });
+          }
+          if (ev.type === 'finish') return events;
+        }
+      }
+      return events;
+    };
+
+    const streamsAB = [heldStream(sidPA), heldStream(sidPB)];
+    // 轮询直到两会话同时 busy（各自 Loop 挂在审批上 = 两槽全被占）
+    let bothBusy = false;
+    for (let i = 0; i < 40 && !bothBusy; i++) {
+      const list = await jfetch<{ sessions: Array<{ id: string; busy: boolean }> }>(`${BASE}/api/sessions`);
+      bothBusy = [sidPA, sidPB].every(id => list.body.sessions.some(s => s.id === id && s.busy));
+      if (!bothBusy) await new Promise(r => setTimeout(r, 150));
+    }
+    ok(bothBusy, 'M16 两会话同时运行（busy×2，全局两槽被占）');
+
+    // C 发普通消息（glob 流，无需审批）→ 必然全局排队（无法 finish——槽被 A/B 占着）
+    let cSawGlobalQueue = false;
+    const streamC = (async (): Promise<Array<Record<string, unknown>>> => {
+      const events: Array<Record<string, unknown>> = [];
+      const resp = await fetch(`${BASE}/api/sessions/${sidPC}/messages`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '看看有什么文件（M16 排队验证）' }),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+          if (!data) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(data); } catch { continue; }
+          events.push(ev);
+          if (ev.type === 'queued' && (ev as { scope?: string }).scope === 'global') cSawGlobalQueue = true;
+          if (ev.type === 'finish') return events;
+        }
+      }
+      return events;
+    })();
+    for (let i = 0; i < 40 && !cSawGlobalQueue; i++) await new Promise(r => setTimeout(r, 150));
+    ok(cSawGlobalQueue, 'M16 第三会话收到 scope=global 排队帧（A/B 并行占满上限的证据）');
+
+    releaseHold(); // 放行 A/B 审批 → 槽位释放 → C 自动接续
+    const [evA2, evB2, evC2] = await Promise.all([...streamsAB, streamC]);
+    ok(evA2.at(-1)?.type === 'finish' && evB2.at(-1)?.type === 'finish' && evC2.at(-1)?.type === 'finish',
+      'M16 放行后三个会话全部完成（排队者自动接续）');
+    // 历史互不污染：各会话的用户消息只含自己发的文本
+    const histOf = async (sid: string) => {
+      const h = await jfetch<{ messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> }>(`${BASE}/api/sessions/${sid}/messages`);
+      return h.body.messages.filter(m => m.role === 'user')
+        .map(m => m.parts.find(p => p.type === 'text')?.text ?? '').join('|');
+    };
+    const [hA, hB, hC] = await Promise.all([histOf(sidPA), histOf(sidPB), histOf(sidPC)]);
+    ok(hC.includes('M16 排队验证') && !hC.includes('占住并发槽'), 'M16 C 的历史只含自己的消息');
+    ok(hA.includes('占住并发槽') && !hA.includes('M16 排队验证'), 'M16 A 的历史未被 B/C 污染');
+    ok(!hB.includes('M16 排队验证'), 'M16 B 的历史未被 C 污染');
 
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {

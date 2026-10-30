@@ -3,6 +3,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Session } from '../apps/server/src/session.js';
+import { ParallelGate } from '../apps/server/src/gate.js';
+import type { ToolUsePart } from '@water/core';
 
 describe('M14 enqueueTurn（消息排队闸门）', () => {
   it('按到达顺序获得执行权；waiters 计数正确', async () => {
@@ -35,5 +37,95 @@ describe('M14 enqueueTurn（消息排队闸门）', () => {
     await t3.wait();   // 立即可执行（链已被释放）
     t3.release();
     expect(s.waiters).toBe(0);
+  });
+});
+
+describe('M16 ParallelGate（跨会话并行闸门）', () => {
+  it('未满直接进入；满后 FIFO 排队，释放即把槽位转交队首', async () => {
+    const g = new ParallelGate(2);
+    const a = g.acquire();
+    const b = g.acquire();
+    expect(a.queued).toBe(false);
+    expect(b.queued).toBe(false);
+    expect(g.running).toBe(2);
+
+    const c = g.acquire();
+    const d = g.acquire();
+    expect(c.queued).toBe(true);
+    expect(d.queued).toBe(true);
+    expect([c.position, d.position]).toEqual([0, 1]);
+
+    const granted: string[] = [];
+    void c.ready.then(() => granted.push('c'));
+    void d.ready.then(() => granted.push('d'));
+    a.release(); // 槽位转交 c（running 不变）
+    await new Promise(r => setTimeout(r, 0));
+    expect(granted).toEqual(['c']);
+    expect(g.running).toBe(2); // b + c
+    b.release(); // 转交 d
+    await new Promise(r => setTimeout(r, 0));
+    expect(granted).toEqual(['c', 'd']);
+    c.release();
+    d.release();
+    expect(g.running).toBe(0);
+    expect(g.queuedCount).toBe(0);
+  });
+
+  it('排队中放弃（release 早于获得槽位）：只撤回自己的号，不误伤队首', async () => {
+    const g = new ParallelGate(1);
+    const a = g.acquire();
+    const b = g.acquire(); // 排队
+    const c = g.acquire(); // 排队
+    b.release();           // 放弃：从等待队列移除 b 自己
+    const granted: string[] = [];
+    void c.ready.then(() => granted.push('c'));
+    a.release();           // 槽位应转交 c（而非已放弃的 b）
+    await new Promise(r => setTimeout(r, 0));
+    expect(granted).toEqual(['c']);
+    expect(g.running).toBe(1);
+    c.release();
+    expect(g.running).toBe(0);
+  });
+
+  it('重复 release 幂等：不重复转交、不重复扣减', async () => {
+    const g = new ParallelGate(1);
+    const a = g.acquire();
+    const b = g.acquire();
+    a.release();
+    a.release(); // 重复释放：第二次必须是空操作
+    await new Promise(r => setTimeout(r, 0));
+    expect(g.running).toBe(1); // b 持有
+    b.release();
+    expect(g.running).toBe(0);
+  });
+});
+
+describe('M16 并发正确性（按会话隔离）', () => {
+  const call = (id: string): ToolUsePart =>
+    ({ type: 'tool_use', id, name: 'write', input: { path: 'x' } }) as ToolUsePart;
+
+  it('审批 pending 按会话隔离：A 的拒绝/放行不影响 B 的悬挂审批', async () => {
+    const a = new Session('m16a');
+    const b = new Session('m16b');
+    const pa = a.waitApproval(call('x1'));
+    const pb = b.waitApproval(call('x2'));
+    expect([a.pendingCount, b.pendingCount]).toEqual([1, 1]);
+    a.resolveApproval('x1', 'deny');
+    await expect(pa).resolves.toBe('deny');
+    expect(b.pendingCount).toBe(1); // B 仍悬挂，未被 A 的动作波及
+    b.resolveApproval('x2', 'once');
+    await expect(pb).resolves.toBe('once');
+    expect(b.pendingCount).toBe(0);
+  });
+
+  it('事件回放缓冲每会话独立：reset 只清空自己的', () => {
+    const a = new Session('m16c');
+    const b = new Session('m16d');
+    a.recordEvent({ type: 'turn_start', turn: 1, model: 'm' });
+    b.recordEvent({ type: 'turn_start', turn: 1, model: 'm' });
+    b.recordEvent({ type: 'text_delta', text: 'hi' });
+    a.resetEventBuffer();
+    expect(a.eventsSince(0)).toEqual([]);
+    expect(b.eventsSince(0).length).toBe(2); // B 的回放完好
   });
 });
