@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
+v0.3.0 主题：**会话与工作区的管理权 + 内核能力补全（子代理/摘要压缩）+ 三端体验对齐**。
+
 ### 文档（M11 · 文章深挖第二批）
 
 - 六篇旧文各追加「v0.3 深化补遗」：01（P0 期票兑现台账——"所见即承诺"的反噬复盘）、04（readline 管道丢行坑 + 双形态交付）、05（41 断言 E2E 如何守护三端协议一致性 + 反面教训）、06（SEA 实测体积/启动数据 + 杀软误报等已知坑）、07（**白名单安全模型三次复用**对照表 + MCP 现实局限 + OpenCode 配置式插件对照）、08（CI 实测耗时数据 + 发布实录交叉引用 + npm pack 审计纪律）
@@ -152,6 +156,7 @@ v0.2.0 主题：**从「学习骨架」到「按公开标准运营的开源项�
 - 凭据全程 DPAPI 加密存储 + 进程内存注入，明文永不落盘/入库
 - `config.json` 禁止出现任何凭据字段（读取时主动扫描拒绝）
 
-[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/wsj502/water-ai-harness/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/wsj502/water-ai-harness/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wsj502/water-ai-harness/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/wsj502/water-ai-harness/releases/tag/v0.1.0
