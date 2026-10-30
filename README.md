@@ -123,7 +123,7 @@ docs/articles/       13 篇深度文章（学习路线）
 npm run typecheck          # 类型检查
 npm test                   # vitest 全量单测（含协议 golden）
 npm run build              # 全量构建
-npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，73 断言）
+npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，全量断言）
 ```
 
 ## 路线图

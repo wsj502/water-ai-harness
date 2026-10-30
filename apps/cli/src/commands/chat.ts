@@ -16,7 +16,11 @@ const SYSTEM_BASE = [
   '回答使用中文，简洁、直接、技术导向。',
 ].join('\n');
 
-export async function cmdChat(cfg: WaterConfig): Promise<void> {
+export interface ChatOptions {
+  quiet?: boolean;    // --quiet：TTY 下也静默子代理过程（脚本化录制/演示）
+}
+
+export async function cmdChat(cfg: WaterConfig, opts: ChatOptions = {}): Promise<void> {
   const mock = process.env.WATER_MOCK === '1';
   if (!mock && !cfg.apiKey) {
     console.error(`❌ 缺少凭据 ${cfg.apiKeyEnv}。用 start-secure.ps1 启动以注入 DPAPI 凭据，或 WATER_MOCK=1 离线体验。`);
@@ -137,7 +141,7 @@ export async function cmdChat(cfg: WaterConfig): Promise<void> {
     messages.push({ role: 'user', parts: [{ type: 'text', text: input }] });
     process.stdout.write('\x1b[34mwater >\x1b[0m ');
 
-    const renderer = new TermRenderer();
+    const renderer = new TermRenderer({ ...(opts.quiet ? { quiet: true } : {}) });
     for await (const ev of agentLoop({
       provider, model, system: SYSTEM, messages,
       tools: builtinTools, permissions,

@@ -40,6 +40,19 @@ export interface Tool {
 
 function str(v: unknown): string { return typeof v === 'string' ? v : String(v ?? ''); }
 
+/**
+ * M25：授权 key 用的路径归一化——同一资源必须有唯一的权限 key。
+ * `./a.txt`、`a.txt`、`a\b.txt` 经 resolveInCwd 解析到同一文件，
+ * 但作为原始字符串是三个不同的 session grant key，会让「本会话总是允许」
+ * 与 M21 的文件粒度继承在换一种写法时失效（重复打扰用户）。
+ * 只做显示/键值归一，不改变实际读写路径（resolveInCwd 行为不动）。
+ */
+function normPathKey(p: string): string {
+  let s = p.replace(/\\/g, '/');
+  while (s.startsWith('./')) s = s.slice(2);
+  return s;
+}
+
 /** 路径安全：解析后必须仍在工作区内（防 ../ 逃逸） */
 function resolveInCwd(cwd: string, p: string): string {
   const abs = path.resolve(cwd, p);
@@ -105,7 +118,7 @@ const readTool: Tool = {
       required: ['path'],
     },
   },
-  argSummary: i => str(i.path),
+  argSummary: i => normPathKey(str(i.path)),
   async run(input, ctx) {
     const abs = resolveInCwd(ctx.cwd, str(input.path));
     const text = await fs.readFile(abs, 'utf8');
@@ -131,7 +144,7 @@ const writeTool: Tool = {
       required: ['path', 'content'],
     },
   },
-  argSummary: i => str(i.path),
+  argSummary: i => normPathKey(str(i.path)),
   async run(input, ctx) {
     const abs = resolveInCwd(ctx.cwd, str(input.path));
     await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -155,7 +168,7 @@ const editTool: Tool = {
       required: ['path', 'old', 'new'],
     },
   },
-  argSummary: i => str(i.path),
+  argSummary: i => normPathKey(str(i.path)),
   async run(input, ctx) {
     const abs = resolveInCwd(ctx.cwd, str(input.path));
     const text = await fs.readFile(abs, 'utf8');
