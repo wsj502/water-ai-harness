@@ -1,7 +1,8 @@
 # ============================================================
 # Water 一体化镜像：core + server + web 构建产物 + 插件
-# 构建:  docker build -t water:0.1.0 .
-# 运行:  docker run -p 3210:3210 -e ZHIPU_API_KEY=xxx water:0.1.0
+# 构建:  docker build -t water:0.7.0 .
+# 运行:  docker run -p 3210:3210 -e ZHIPU_API_KEY=xxx water:0.7.0
+#        （离线体验：-e WATER_MOCK=1，零凭据）
 # ============================================================
 
 # ---- 阶段 1：构建 ----

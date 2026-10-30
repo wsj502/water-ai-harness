@@ -1,15 +1,37 @@
-# 构建上下文瘦身：镜像只需要 manifest + src + 插件
+# 构建上下文瘦身（#65）：monorepo 里最贵的三块——node_modules / Rust target / SEA 产物——
+# 都不允许进上下文；镜像内只需要 manifest + 源码 + plugins
 node_modules
 **/node_modules
+
+# Rust / Tauri 桌面端（镜像只含 server+web，desktop 整个不需要）
+apps/desktop
+
+# SEA 单文件产物（build-sea.ps1 可重建）
+apps/server/dist-sea
+
+# 构建产物（镜像内重新构建）
+dist
+build
+out
 **/dist
+**/build
+**/out
+
+# VCS / 文档 / 本地数据
 .git
-.gitignore
-*.log
-.water
-prototype
 docs
-scripts
-tools
+*.md
+!README.md
+coverage
+workspace
+.water
 .ai-secrets
-Dockerfile
-docker-compose.yml
+.env
+.env.local
+*.log
+**/*.log
+*.tsbuildinfo
+**/*.tsbuildinfo
+*.tgz
+**/*.tgz
+HANDOFF.md
