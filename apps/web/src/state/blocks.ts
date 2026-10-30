@@ -12,7 +12,13 @@ export type UiBlock =
   | { kind: 'text'; text: string; ts?: number }
   | { kind: 'thinking'; text: string; ts?: number }
   | { kind: 'notice'; text: string; ts?: number }
-  | { kind: 'tool'; call: ToolUsePart; status: ToolStatus; result?: string; durationMs?: number; ts?: number };
+  | {
+    kind: 'tool'; call: ToolUsePart; status: ToolStatus; result?: string; durationMs?: number; ts?: number;
+    /** M12：子代理过程（sub_event 折叠出的实时记录） */
+    subText?: string;
+    subTurns?: number;
+    subTools?: Array<{ name: string; ok: boolean | null }>;
+  };
 
 /** 把 LoopEvent 应用到块序列（返回新数组，供 React setState） */
 export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
@@ -64,6 +70,26 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
         ts: Date.now(),
       });
       break;
+    case 'sub_event': {
+      // M12：子代理事件折叠进对应 task 工具卡（文本累积 / 工具时间线 / 轮次计数）
+      return next.map(b => {
+        if (b.kind !== 'tool' || b.call.id !== ev.callId) return b;
+        const inner = ev.ev as LoopEvent;
+        const sub = {
+          subText: b.subText ?? '',
+          subTurns: b.subTurns ?? 0,
+          subTools: b.subTools ?? [],
+        };
+        switch (inner.type) {
+          case 'turn_start': sub.subTurns++; break;
+          case 'text_delta': sub.subText += inner.text; break;
+          case 'tool_result': sub.subTools.push({ name: inner.call.name, ok: !inner.isError }); break;
+          case 'tool_denied': sub.subTools.push({ name: inner.call.name, ok: null }); break;
+          default: break; // thinking/usage/compacted 等暂不展开
+        }
+        return { ...b, ...sub };
+      });
+    }
     case 'turn_start':
       break; // 轮次切换天然由块边界表达
     default:
