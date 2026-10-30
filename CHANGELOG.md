@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+### 新增（M13 · 配置式命令 + MCP 多 server）
+
+- **配置式命令（零代码插件）**：`~/.water/config.json` 新增 `commands: [{name, template, description?}]`——纯 prompt 模板（`$ARGUMENTS` 替换），无执行逻辑；字段白名单校验（防夹带 command 等危险字段）；分发优先级 内置 > ESM 插件 > 配置式；`/api/plugins` 返回 `configCommands`，插件页新增「📄 配置式命令」卡
+- `WATER_CONFIG_FILE` 环境变量：配置路径覆盖（测试/多环境注入）
+- **MCP 多 server**：`.water/mcp.json` 支持业界通行形状 `{"mcpServers": {"name": {"command","args","env"}}}`（Claude/OpenCode 同构）；server 级 `env` 注入随子进程隔离；旧版 `servers[]` 兼容读取并告警迁移
+- vitest 5 用例（解析/非法 name/字段白名单/凭据红线/exactOptionalPropertyTypes 契约）；E2E 44 断言（清单可见 + **$ARGUMENTS 展开以历史消息实证**）
+
 ### 新增（M12 · 子代理流式透传 + 可写模式）
 
 - 新 LoopEvent `sub_event {callId, ev}`（自引用联合）：子代理事件实时透传——工具执行期**事件泵**（队列+wake）把子代理的轮次/思考/文本/工具调用实时 yield，task 工具卡从黑盒变直播

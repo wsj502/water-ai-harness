@@ -13,7 +13,7 @@
  *   6. 非法模型被 400 拒绝
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -81,10 +81,15 @@ async function main(): Promise<void> {
   // 独立临时工作区：测试会话/数据库不污染开发目录；第二个目录用于 M7B 多工作区验证
   const workdir = mkdtempSync(path.join(tmpdir(), 'water-e2e-'));
   const workdir2 = mkdtempSync(path.join(tmpdir(), 'water-e2e2-'));
+  // M13：配置式命令——测试注入的临时 config.json（含展开验证用模板）
+  const cfgFile = path.join(workdir, 'test-config.json');
+  writeFileSync(cfgFile, JSON.stringify({
+    commands: [{ name: 'say', template: '请原样输出以下内容：[$ARGUMENTS]', description: '回显命令' }],
+  }), 'utf8');
   const child = spawn(process.execPath, [SERVER], {
     env: {
       ...process.env, WATER_MOCK: '1', WATER_PORT: String(PORT),
-      WATER_WORKSPACES: workdir2,
+      WATER_WORKSPACES: workdir2, WATER_CONFIG_FILE: cfgFile,
     },
     cwd: workdir,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -239,6 +244,22 @@ async function main(): Promise<void> {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId: 'default' }),
     });
     ok(patchWs.status === 400, '存续期换根被拒（工作区创建时定死）');
+
+    // ---- 10. 配置式命令（M13：清单可见 + $ARGUMENTS 展开实证）----
+    const pluginsResp = await jfetch<{ configCommands: Array<{ name: string }> }>(`${BASE}/api/plugins`);
+    ok(pluginsResp.body.configCommands?.some(c => c.name === '/say'), '/api/plugins 列出配置式命令 /say');
+    const s5 = await jfetch<{ id: string }>(`${BASE}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const evSay = await readSSE(`${BASE}/api/sessions/${s5.body.id}/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: '/say 你好世界' }),
+    });
+    ok(evSay.at(-1)?.type === 'finish', '配置式命令消息正常完成');
+    const histSay = await jfetch<{ messages: Array<{ role: string; parts: Array<{ type: string; text?: string }> }> }>(`${BASE}/api/sessions/${s5.body.id}/messages`);
+    const firstUser = histSay.body.messages.find(m => m.role === 'user');
+    const firstText = firstUser?.parts.find(p => p.type === 'text')?.text ?? '';
+    ok(firstText.includes('[$ARGUMENTS]') === false && firstText.includes('[你好世界]'), '$ARGUMENTS 已展开为用户参数（历史可证）');
 
     console.log(`\n${failed === 0 ? '✅ E2E PASS' : `❌ E2E FAIL（${failed} 项）`}`);
   } finally {
