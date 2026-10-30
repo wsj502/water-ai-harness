@@ -63,22 +63,26 @@ flowchart LR
     PLUG[ESM 插件 + MCP 桥] --> TOOL
 ```
 
-## 功能矩阵（v0.2.0）
+## 功能矩阵（v0.3.0）
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
 | 双协议 Provider | ✅ | Anthropic Messages + OpenAI 兼容；翻译层 golden 测试帧级锁定 |
 | 模型注册表与会话级切换 | ✅ | 运行时切换不重启进程；协议随模型推断；Web 只能「选」不能传 baseUrl（防 key 外泄） |
+| **工作区注册表** | ✅ | `~/.water/workspaces.json` 多根管理；会话创建时绑定（定死不换根）；白名单防目录逃逸 |
+| **会话管理** | ✅ | 删除 + 归档（可看不可发、独立列表、持久化） |
+| **只读研究子代理** | ✅ | `task` 工具派生嵌套 Agent Loop（只读工具集、防递归双保险、中断传播） |
+| **LLM 摘要压缩** | ✅ | 超窗先摘要（成本披露）→ 失败回退确定性裁剪，会话绝不因压缩中断 |
 | 上下文管理 | ✅ | token 估算 + 三级确定性压缩（裁旧 tool_result → 丢最旧轮次 → 孤儿清退） |
 | 容错重试 | ✅ | 429/5xx 指数退避，只在流首帧前重试；中断穿透；120s 超时 |
 | 权限与审批 | ✅ | 低/中/高三级风险，once/session/deny；审批桥打通 SSE 与反向 POST |
 | SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话 |
 | Web 体验 | ✅ | 零依赖 markdown 渲染（XSS 架构免疫）、行级 diff、五页视图 |
-| 三端 | ✅ | CLI（chat/run/doctor）/ Web / Tauri 桌面（SEA sidecar 单文件） |
+| 三端 | ✅ | CLI（`/model` `/compact` `/system`）/ Web / Tauri 桌面（SEA sidecar 单文件） |
 | 插件系统 | ✅ | 进程内 ESM + manifest 权限治理 + MCP 桥接示例 |
-| SYSTEM 可配 | ✅ | env > config.json > 默认；AGENTS.md 自动注入 |
-| 持久化 | ✅ | node:sqlite 零依赖；会话/任务落库重启恢复 |
-| 测试 | ✅ | vitest 37 用例（协议 golden/上下文/渲染 XSS 契约）+ 离线 E2E 27 断言，双平台 CI |
+| SYSTEM 可配 | ✅ | env > config.json > 默认；各工作区自己的 AGENTS.md |
+| 持久化 | ✅ | node:sqlite 零依赖；会话/任务/归档/工作区绑定落库重启恢复 |
+| 测试 | ✅ | vitest 46 用例（协议 golden/上下文/子代理/摘要/渲染 XSS 契约）+ 离线 E2E 41 断言，双平台 CI |
 | Docker 交付 | ✅ | 多阶段镜像 + 单进程静态托管形态 |
 
 ## 目录结构
@@ -123,8 +127,9 @@ npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，27 断�
 ## 路线图
 
 - [x] P0-P6：原型 → 内核 → CLI → Server+Web → 桌面 → 插件 → 交付
-- [x] v0.2.0（M0-M6）：开源工程地基 / 模型切换 / 上下文管理 / Web 体验 / 测试基建 / 文章深化
-- [ ] v0.3 计划：子代理（task 派生）、LLM 摘要压缩、CLI `/model` 交互命令、MCP 协议扩展
+- [x] v0.2.0（M0-M6）：开源工程地基 / 模型切换 / 上下文管理 / Web 体验 / 测试基建 / 文章深化 / 转公开
+- [x] v0.3.0（M7-M11）：会话与工作区管理 / 只读子代理 / LLM 摘要压缩 / CLI 命令对齐 / 文章深挖第二批
+- [ ] v0.4 计划：子代理流式事件透传、可写子代理、MCP 多 server 与配置式插件、任务队列（会话内多消息排队）
 
 ## 贡献与安全
 

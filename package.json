@@ -1,6 +1,6 @@
 {
   "name": "water-ai-harness",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Water —— 一个用于学习研究的 AI Agent Harness：内核 + CLI + Web + 桌面端 + 插件系统",
   "type": "module",

@@ -166,7 +166,7 @@ app.get('/api/config', c => c.json({
   baseUrl: mock ? '(mock)' : cfg.baseUrl,
   model: cfg.model,
   workspace: cfg.cwd,
-  version: '0.2.0',
+  version: '0.3.0',
   // 只暴露「有没有」，永不暴露 key 本身
   hasKey: mock || Boolean(cfg.apiKey),
   apiKeyEnv: cfg.apiKeyEnv,
