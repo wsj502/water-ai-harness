@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+### 新增（M20 · CLI 子代理时间线）
+
+- `TermRenderer` 增加 `sub_event` 折叠渲染：缩进时间线（轮次分隔行 / 工具行 + 状态符 / 文本流 / 审批结果行），与 Web M18 时间线**同语义、终端表达**——子代理过程在 CLI 从完全不可见变为结构化呈现（此前 render.ts 对 sub_event 没有任何 case，静默丢弃）
+- quiet 模式（非 TTY / 管道 / 重定向自动判定，可显式覆盖）下子代理过程静默：不打爆脚本化输出，主循环 `tool_result` 已有结论；`--json` NDJSON 模式天然透传（零改动）
+- 渲染细节由 vitest 直测渲染器锁定（spy stdout：非 quiet 结构 / quiet 静默 / 文本流收尾）；另做真实管道实测（`water run --yes` + mock 剧本重定向）
+
 ### 新增（M19 · 审批回放统一）
 
 - 主循环 `approval_required` 帧进回放缓冲（与 M15 的子级审批帧对称）——此前它是瞬时事件，刷新即丢；回放出的审批卡由后续 `tool_approved` / `tool_denied` 帧收拢到终态，复用 M18 的折叠语义
