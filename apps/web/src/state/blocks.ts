@@ -72,13 +72,17 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
         ts: Date.now(),
       });
       break;
-    case 'queued':
+    case 'queued': {
+      const q = ev as QueuedEvent;
       next.push({
         kind: 'notice',
-        text: `⏳ 已排队（第 ${(ev as QueuedEvent).position} 位）——前一条处理完后自动执行`,
+        text: q.scope === 'global'
+          ? `🌐 全局并发已满（跨会话排队，前面 ${q.position} 个）——有会话完成即自动执行`
+          : `⏳ 已排队（第 ${q.position} 位）——前一条处理完后自动执行`,
         ts: Date.now(),
       });
       break;
+    }
     case 'sub_event': {
       // M12：子代理事件折叠进对应 task 工具卡（文本累积 / 工具时间线 / 轮次计数）
       // M15：嵌套的 approval_required 记为子级审批；tool_approved/tool_denied 收拢其状态

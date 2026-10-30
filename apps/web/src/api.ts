@@ -18,6 +18,8 @@ export interface ServerConfig {
   version: string;
   hasKey?: boolean;
   apiKeyEnv?: string;
+  /** M16：跨会话并发上限（WATER_MAX_PARALLEL_SESSIONS） */
+  maxParallelSessions?: number;
 }
 
 export interface SessionMeta {
@@ -75,10 +77,11 @@ export interface ApprovalRequiredEvent {
   call: { id: string; name: string; input: Record<string, unknown> };
 }
 
-/** M14：排队状态事件（瞬时，不进回放缓冲） */
+/** M14：排队状态事件（瞬时，不进回放缓冲）。M16：scope=global 表示跨会话排队（全局并发已满） */
 export interface QueuedEvent {
   type: 'queued';
   position: number;
+  scope?: 'session' | 'global';
 }
 
 /** M15：子级审批请求——嵌套在 sub_event 里（callId 为 `${task调用id}:${子id}` 命名空间） */
