@@ -80,7 +80,9 @@ export default function App() {
         setBusy(true);
         void (async () => {
           try {
+            // M25：自适应退避——有新事件重置到 250ms（跟手），空转逐级退避封顶 1200ms（不轰炸）
             let cursor = 0;
+            let delay = 250;
             for (;;) {
               const { events, busy: still } = await api.eventsSince(id, cursor);
               for (const e of events) {
@@ -90,7 +92,8 @@ export default function App() {
               }
               if (events.some(e => (e.ev as { type: string }).type === 'finish')) break;
               if (!still) break;
-              await new Promise(r => setTimeout(r, 1000));
+              await new Promise(r => setTimeout(r, delay));
+              delay = events.length > 0 ? 250 : Math.min(delay * 2, 1200);
             }
           } catch { /* 接流失败则保持历史视图 */ }
           finally { setBusy(false); }
@@ -140,6 +143,8 @@ export default function App() {
       } catch (streamErr) {
         if (ac.signal.aborted) throw streamErr; // 用户主动中断，不补帧
         const deadline = Date.now() + 10 * 60_000;
+        // M25：与 busy 接流同款自适应退避（有帧 250ms / 空转封顶 1200ms）
+        let delay = 250;
         for (;;) {
           if (Date.now() > deadline) throw new Error('断线补帧超时（10 分钟）');
           const { events } = await api.eventsSince(sid, lastSeq).catch(() => ({ events: [], busy: false }));
@@ -148,7 +153,8 @@ export default function App() {
             handle(e.ev);
             if (e.ev.type === 'finish') { api.listSessions().then(setSessions).catch(() => {}); return; }
           }
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, delay));
+          delay = events.length > 0 ? 250 : Math.min(delay * 2, 1200);
         }
       }
       api.listSessions().then(setSessions).catch(() => {});

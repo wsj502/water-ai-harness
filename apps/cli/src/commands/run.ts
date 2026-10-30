@@ -14,6 +14,7 @@ const SYSTEM = [
 export interface RunOptions {
   json?: boolean;
   yes?: boolean;      // --yes：自动批准所有审批（危险，仅限信任任务）
+  quiet?: boolean;    // --quiet：TTY 下也静默子代理过程（M25）
   maxTurns?: number;
 }
 
@@ -36,7 +37,7 @@ export async function cmdRun(task: string, cfg: WaterConfig, opts: RunOptions): 
   // 非交互模式：--yes 自动批准；否则审批请求一律拒绝（无人可问）
   const approve = opts.yes ? async () => 'once' as const : undefined;
 
-  const renderer = new TermRenderer();
+  const renderer = new TermRenderer({ ...(opts.quiet ? { quiet: true } : {}) });
   if (!opts.json) {
     console.log(`\x1b[36mwater run\x1b[0m · ${cfg.model} via ${cfg.protocol} · ${cfg.cwd}\n`);
   }

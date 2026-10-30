@@ -37,15 +37,17 @@ function cfg(): ReturnType<typeof resolveConfig> {
 
 program.command('chat')
   .description('交互式会话')
-  .action(() => cmdChat(cfg()));
+  .option('--quiet', '静默子代理时间线（TTY 下强制关闭过程输出，只要结论）')
+  .action((o: { quiet?: boolean }) => cmdChat(cfg(), o));
 
 program.command('run')
   .description('执行一次性任务')
   .argument('<task>', '任务描述')
   .option('--json', '以 NDJSON 输出 LoopEvent 流')
   .option('--yes', '自动批准所有工具调用（危险）')
+  .option('--quiet', '静默子代理时间线（TTY 下强制关闭过程输出，只要结论）')
   .option('--max-turns <n>', '最大轮次', v => Number(v))
-  .action((task: string, o: { json?: boolean; yes?: boolean; maxTurns?: number }) =>
+  .action((task: string, o: { json?: boolean; yes?: boolean; quiet?: boolean; maxTurns?: number }) =>
     cmdRun(task, cfg(), o));
 
 program.command('doctor')

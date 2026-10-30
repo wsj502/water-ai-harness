@@ -628,3 +628,68 @@ describe('M21 子级授权继承', () => {
     } finally { rmSync(tmp, { recursive: true, force: true }); }
   });
 });
+
+describe('M25 授权 key 路径归一化', () => {
+  it('argSummary：./、嵌套 ./、反斜杠都归一到同一 key', () => {
+    const write = builtinTools.find(t => t.spec.name === 'write')!;
+    const edit = builtinTools.find(t => t.spec.name === 'edit')!;
+    expect(write.argSummary({ path: 'a.txt' })).toBe('a.txt');
+    expect(write.argSummary({ path: './a.txt' })).toBe('a.txt');
+    expect(write.argSummary({ path: '.\\a.txt' })).toBe('a.txt');
+    expect(write.argSummary({ path: './sub/../a.txt' })).not.toBe('a.txt'); // 只做前缀/分隔符归一，非全量规范化——保守不误合
+    expect(edit.argSummary({ path: './dir\\b.md' })).toBe('dir/b.md');
+  });
+
+  it('session 授权跨写法免问：./a.txt 授权后 a.txt 不再打扰（M21 继承不被绕过）', async () => {
+    // 两个子代理写同一文件但写法不同：第一个 ./a.txt，第二个 a.txt
+    const provider = new (class implements Provider {
+      readonly protocol = 'openai' as const;
+      async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+        const isSub = !req.tools?.some(t => t.name === 'task');
+        if (isSub) {
+          const userText = (req.messages.find(m => m.role === 'user')?.parts[0] as { text?: string } | undefined)?.text ?? '';
+          const k = Number(/#(\d+)/.exec(userText)?.[1] ?? 0);
+          const done = req.messages.filter(m => m.role === 'tool').length;
+          if (done < 1) {
+            const f = k === 0 ? './a.txt' : 'a.txt';
+            yield { type: 'tool_use', call: { type: 'tool_use', id: `sw${k}`, name: 'write', input: { path: f, content: `v-${k}` } } };
+            yield { type: 'done', stopReason: 'tool_use' };
+          } else {
+            yield { type: 'text_delta', text: '子代理完成' };
+            yield { type: 'done', stopReason: 'end' };
+          }
+          return;
+        }
+        const n = req.messages.filter(m => m.role === 'tool').length;
+        if (n < 2) {
+          yield { type: 'tool_use', call: { type: 'tool_use', id: `p-${n}`, name: 'task', input: { prompt: `任务 #${n}`, mode: 'write' } } };
+          yield { type: 'done', stopReason: 'tool_use' };
+        } else {
+          yield { type: 'text_delta', text: '父级收尾' };
+          yield { type: 'done', stopReason: 'end' };
+        }
+      }
+    })();
+
+    const writeAsked: string[] = [];
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m25-'));
+    try {
+      for await (const _ev of agentLoop({
+        provider, model: 'mock', system: 'SYS',
+        messages: [{ role: 'user', parts: [{ type: 'text', text: '派生' }] }],
+        tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+        approve: async call => {
+          if (call.name === 'write') {
+            writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+            return 'session';
+          }
+          return 'once';
+        },
+      })) { /* 收集事件非本用例关注点 */ }
+      // 归一化生效：./a.txt 的 session 授权经 key 归一 + M21 上浮继承，第二次（a.txt 写法）免问
+      expect(writeAsked).toEqual(['./a.txt']);
+      expect(readFileSync(path.join(tmp, 'a.txt'), 'utf8')).toBe('v-1');
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
