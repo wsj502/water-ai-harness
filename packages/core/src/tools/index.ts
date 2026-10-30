@@ -307,6 +307,62 @@ export function configToolToTool(ct: import('../config.js').ConfigTool): Tool {
       inputSchema: ct.parameters ?? { type: 'object', properties: {} },
     },
     argSummary: i => JSON.stringify(i).slice(0, 60),
-    run: async input => ct.template.replace(/\$(\w+)/g, (_, k: string) => String(input[k] ?? '')),
+    run: async input => (ct.template ?? '').replace(/\$(\w+)/g, (_, k: string) => String(input[k] ?? '')),
+  };
+}
+
+/**
+ * M22：把 config.json tools[] 的 http 型条目包装成 Tool——声明式出网调用。
+ * 安全模型：域名白名单在启动期由 loadFileConfig 校验（防 SSRF）；凭据只能经 `$env:变量名`
+ * 插值（值来自进程环境/DPAPI 注入链路，永不入 config、不 echo 进错误信息）；超时与响应
+ * 截断防资源失控；出网是可观测副作用 → 风险级 high（riskFor 恒 high，逐次审批）。
+ */
+export function configHttpToolToTool(
+  ct: import('../config.js').ConfigTool,
+  opts: { timeoutMs?: number } = {},
+): Tool {
+  const h = ct.http!; // loadFileConfig 已校验 http 型必有 http 字段
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  return {
+    risk: 'high',
+    riskFor: () => 'high',
+    spec: {
+      name: ct.name,
+      description: ct.description,
+      inputSchema: ct.parameters ?? { type: 'object', properties: {} },
+    },
+    argSummary: i => JSON.stringify(i).slice(0, 60),
+    run: async input => {
+      // 单遍插值：$env:VAR（凭据）与 $param（入参）同一正则——避免替换结果被二次解释
+      const interpolate = (s: string): string => s.replace(
+        /\$env:([A-Za-z_][A-Za-z0-9_]*)|\$(\w+)/g,
+        (_m, envName: string | undefined, paramName: string | undefined) => {
+          if (envName !== undefined) {
+            const v = process.env[envName];
+            if (v === undefined) throw new Error(`环境变量 ${envName} 未设置（$env: 插值失败——凭据请在服务端注入后引用）`);
+            return v;
+          }
+          return paramName !== undefined && input[paramName] !== undefined ? String(input[paramName]) : '';
+        },
+      );
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(h.headers ?? {})) headers[k] = interpolate(v);
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      try {
+        const resp = await fetch(interpolate(h.url), {
+          method: (h.method ?? 'GET').toUpperCase(),
+          headers,
+          ...(h.body !== undefined ? { body: interpolate(h.body) } : {}),
+          signal: ac.signal,
+        });
+        const text = (await resp.text()).slice(0, 64 * 1024); // 截断：工具结果只是上下文素材
+        return `HTTP ${resp.status} ${resp.statusText}\n${text}`;
+      } catch (e) {
+        throw new Error(`HTTP 调用失败（${h.url.slice(0, 120)}）: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
   };
 }

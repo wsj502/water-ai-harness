@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
-  agentLoop, builtinTools, compactMessages, configToolToTool, createProvider, estimateMessagesTokens, loadPlugins,
+  agentLoop, builtinTools, compactMessages, configHttpToolToTool, configToolToTool, createProvider, estimateMessagesTokens, loadPlugins,
   loadFileConfig, MockProvider, ProviderRegistry, resolveConfig, BUILTIN_MODELS, mergeModels,
   PROTOCOL_DEFAULTS, PROTOCOL_LABEL,
   type PluginRegistry, type Provider, type ToolUsePart,
@@ -167,8 +167,10 @@ const app = new Hono();
 
 // 插件注册表在 main() 里异步加载（避免顶层 await，兼容 CJS/SEA 打包）
 let plugins: PluginRegistry = { plugins: [], tools: [], commands: [], hooks: [] };
-// M17：配置式声明工具（prompt 型）——config.json tools[] 直接进注册表；重名即拒（启动期暴露）
-const configToolWrappers = (fileCfg.tools ?? []).map(configToolToTool);
+// M17/M22：配置式声明工具——config.json tools[] 直接进注册表；重名即拒（启动期暴露）。
+// prompt 型零副作用（low）；http 型出网（high 逐次审批，域名白名单已在 loadFileConfig 校验）
+const configToolWrappers = (fileCfg.tools ?? []).map(t =>
+  t.kind === 'http' ? configHttpToolToTool(t) : configToolToTool(t));
 for (const t of configToolWrappers) {
   const clash = builtinTools.some(b => b.spec.name === t.spec.name)
     || configToolWrappers.some(o => o !== t && o.spec.name === t.spec.name);
@@ -278,9 +280,10 @@ app.get('/api/plugins', c => c.json({
     name: `/${c.name}`,
     ...(c.description ? { description: c.description } : {}),
   })),
-  // M17：配置式声明工具清单（prompt 型：模板 $参数 替换，零执行逻辑）
+  // M17/M22：配置式声明工具清单（prompt 型模板 / http 型出网声明）
   configTools: (fileCfg.tools ?? []).map(t => ({
     name: t.name,
+    kind: t.kind ?? 'prompt',
     description: t.description,
     hasParameters: Boolean(t.parameters),
   })),
