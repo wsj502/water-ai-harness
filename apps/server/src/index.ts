@@ -243,7 +243,7 @@ app.get('/api/sessions', c => c.json({
   sessions: store.list(c.req.query('archived') === '1'),
 }));
 
-/** 插件清单：名称/版本/权限/注册物/加载错误 */
+/** 插件清单：名称/版本/权限/注册物/加载错误；含配置式命令（M13） */
 app.get('/api/plugins', c => c.json({
   plugins: plugins.plugins.map(p => ({
     name: p.manifest.name,
@@ -254,6 +254,10 @@ app.get('/api/plugins', c => c.json({
     commands: p.commands.map(cd => `/${cd.name}`),
     dir: p.dir,
     error: p.error ?? null,
+  })),
+  configCommands: (fileCfg.commands ?? []).map(c => ({
+    name: `/${c.name}`,
+    ...(c.description ? { description: c.description } : {}),
   })),
 }));
 
@@ -418,11 +422,14 @@ app.post('/api/sessions/:id/messages', async c => {
     });
   }
 
-  // 斜杠命令展开：/review src/x.ts → 模板替换 $ARGUMENTS
+  // 斜杠命令展开：内置 > ESM 插件 > 配置式（M13 优先级约定）；模板替换 $ARGUMENTS
   const cmdMatch = text.match(/^\/(\S+)\s*([\s\S]*)$/);
   if (cmdMatch) {
-    const cmd = plugins.commands.find(cd => cd.name === cmdMatch[1]);
-    if (cmd) text = cmd.template.replace(/\$ARGUMENTS/g, cmdMatch[2] ?? '');
+    const cmdName = cmdMatch[1]!;
+    const cmdArgs = cmdMatch[2] ?? '';
+    const cmd: { template: string } | undefined = plugins.commands.find(cd => cd.name === cmdName)
+      ?? fileCfg.commands?.find(c => c.name === cmdName);
+    if (cmd) text = cmd.template.replace(/\$ARGUMENTS/g, cmdArgs);
   }
 
   // M1：按「会话覆盖 + 服务端默认」解析本次运行的模型与 provider（失败快速返回，不污染历史）

@@ -14,12 +14,14 @@ import { homedir } from 'node:os';
 import readline from 'node:readline';
 
 class McpClient {
-  constructor(name, command, args, cwd) {
+  constructor(name, command, args, cwd, env) {
     this.name = name;
     this.nextId = 1;
     this.pending = new Map(); // id -> {resolve, reject}
     this.child = spawn(command, args, {
       cwd, stdio: ['pipe', 'pipe', 'inherit'],
+      // M13：server 级 env 注入（如 API key 类环境变量，随子进程隔离）
+      env: { ...process.env, ...(env ?? {}) },
       // Windows 上只有 .cmd/.bat（如 npm.cmd）才需要壳；裸 exe 走壳反而触发 DEP0190
       shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(command),
     });
@@ -75,8 +77,20 @@ function loadMcpConfig(cwd) {
     if (!existsSync(f)) continue;
     try {
       const j = JSON.parse(readFileSync(f, 'utf8'));
-      for (const s of j.servers ?? []) {
-        if (s?.name && s?.command) servers.set(s.name, s);
+      // M13：业界通行形状 {mcpServers: {name: {command, args, env}}}（Claude/OpenCode 同构）
+      if (j.mcpServers && typeof j.mcpServers === 'object') {
+        for (const [name, s] of Object.entries(j.mcpServers)) {
+          if (s?.command) servers.set(name, { name, ...s });
+        }
+      }
+      // 旧版形状 {servers: [{name, command, args}]}：兼容读取并告警
+      if (Array.isArray(j.servers)) {
+        for (const s of j.servers) {
+          if (s?.name && s?.command && !servers.has(s.name)) {
+            console.warn(`[mcp-bridge] 旧版 servers[] 格式建议迁移到 mcpServers{}：${s.name}`);
+            servers.set(s.name, s);
+          }
+        }
       }
     } catch (e) {
       console.error(`[mcp-bridge] 解析 ${f} 失败: ${e.message}`);
@@ -97,7 +111,7 @@ export default {
 
     for (const s of servers) {
       try {
-        const client = new McpClient(s.name, s.command, s.args ?? [], ctx.cwd);
+        const client = new McpClient(s.name, s.command, s.args ?? [], ctx.cwd, s.env);
         const tools = await client.init();
         this._clients.push(client);
 

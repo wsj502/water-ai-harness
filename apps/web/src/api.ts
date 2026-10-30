@@ -142,6 +142,11 @@ export const api = {
   listPlugins: () =>
     fetch(`${BASE}/api/plugins`).then(r => json<{ plugins: PluginInfo[] }>(r)).then(j => j.plugins),
 
+  /** M13：配置式命令清单（~/.water/config.json commands[]） */
+  configCommands: () =>
+    fetch(`${BASE}/api/plugins`).then(r => json<{ configCommands: Array<{ name: string; description?: string }> }>(r))
+      .then(j => j.configCommands ?? []),
+
   listTasks: () =>
     fetch(`${BASE}/api/tasks`).then(r => json<{ tasks: TaskRecord[] }>(r)).then(j => j.tasks),
 

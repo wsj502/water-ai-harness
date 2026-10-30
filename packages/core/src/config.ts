@@ -43,6 +43,15 @@ interface FileConfig {
   systemPrompt?: string;
   /** M1：自定义模型表（与内置表合并，id 冲突时自定义优先） */
   models?: ModelInfo[];
+  /** M13：配置式斜杠命令（零代码插件——只是 prompt 模板，无执行逻辑） */
+  commands?: ConfigCommand[];
+}
+
+/** 配置式命令：模板中 $ARGUMENTS 替换为用户参数 */
+export interface ConfigCommand {
+  name: string;
+  template: string;
+  description?: string;
 }
 
 export const PROTOCOL_DEFAULTS = {
@@ -88,14 +97,43 @@ function parseCustomModels(raw: unknown, src: string): ModelInfo[] {
   });
 }
 
+/** 命令名形状（防注入路径/空格：仅字母数字连字符） */
+const COMMAND_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/** 校验配置式命令条目；非法即抛错（启动期暴露） */
+function parseConfigCommands(raw: unknown, src: string): ConfigCommand[] {
+  if (!Array.isArray(raw)) throw new Error(`${src} commands 字段必须是数组`);
+  return raw.map((e, i) => {
+    const at = `${src} commands[${i}]`;
+    if (typeof e !== 'object' || e === null) throw new Error(`${at} 必须是对象`);
+    for (const k of Object.keys(e as Record<string, unknown>)) {
+      if (k !== 'name' && k !== 'template' && k !== 'description') {
+        throw new Error(`${at} 不支持的字段: ${k}（仅 name/template/description）`);
+      }
+    }
+    const c = e as { name?: unknown; template?: unknown };
+    if (typeof c.name !== 'string' || !COMMAND_NAME_RE.test(c.name)) {
+      throw new Error(`${at} name 必须是字母开头的字母/数字/连字符`);
+    }
+    if (typeof c.template !== 'string' || !c.template.trim()) throw new Error(`${at} template 必须是非空字符串`);
+    return {
+      name: c.name,
+      template: c.template,
+      ...(typeof (e as { description?: unknown }).description === 'string'
+        ? { description: (e as { description: string }).description } : {}),
+    };
+  });
+}
+
 export function loadFileConfig(): FileConfig {
-  const p = path.join(homedir(), '.water', 'config.json');
+  // WATER_CONFIG_FILE：测试/多环境注入配置路径（缺省 ~/.water/config.json）
+  const p = process.env.WATER_CONFIG_FILE ?? path.join(homedir(), '.water', 'config.json');
   if (!existsSync(p)) return {};
-  let j: FileConfig & { models?: unknown };
+  let j: FileConfig & { models?: unknown; commands?: unknown };
   try {
-    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig & { models?: unknown };
+    j = JSON.parse(readFileSync(p, 'utf8')) as FileConfig & { models?: unknown; commands?: unknown };
   } catch (e) {
-    throw new Error(`读取 ~/.water/config.json 失败: ${e instanceof Error ? e.message : e}`);
+    throw new Error(`读取 ${p} 失败: ${e instanceof Error ? e.message : e}`);
   }
   // 红线：config.json 里不允许出现任何 key 字段
   for (const k of Object.keys(j)) {
@@ -103,9 +141,15 @@ export function loadFileConfig(): FileConfig {
       throw new Error(`config.json 不允许存放凭据字段: ${k}（凭据只走环境变量）`);
     }
   }
-  const { models: rawModels, ...rest } = j as FileConfig & { models?: unknown };
-  if (rawModels === undefined) return rest;
-  return { ...rest, models: parseCustomModels(rawModels, '~/.water/config.json') };
+  const models = j.models === undefined ? undefined : parseCustomModels(j.models, '~/.water/config.json');
+  const commands = j.commands === undefined ? undefined : parseConfigCommands(j.commands, '~/.water/config.json');
+  const { models: _m, commands: _c, ...rest } = j as FileConfig & { models?: unknown; commands?: unknown };
+  if (models === undefined && commands === undefined) return rest;
+  return {
+    ...rest,
+    ...(models !== undefined ? { models } : {}),
+    ...(commands !== undefined ? { commands } : {}),
+  };
 }
 
 export function resolveConfig(flags: ConfigFlags = {}): WaterConfig {
