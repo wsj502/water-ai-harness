@@ -53,6 +53,27 @@ describe('ProviderRegistry', () => {
     expect(c.ok && c.provider.protocol).toBe('openai');
   });
 
+  it('BYOK（#67）：key 变更后 invalidate 才会重建实例（缓存键不含 key 值）', () => {
+    const keys: Record<string, string> = { ZHIPU_API_KEY: 'old-key' };
+    const r = makeRegistry({ keys });
+    const before = r.acquire(r.find('glm-4.6')!);
+    keys.ZHIPU_API_KEY = 'new-key-2'; // 同 env 名换 key（BYOK 更新场景）
+    const cached = r.acquire(r.find('glm-4.6')!);
+    expect(before.ok && cached.ok && cached.provider === before.provider).toBe(true); // 未失效：仍旧实例
+    r.invalidate();
+    const rebuilt = r.acquire(r.find('glm-4.6')!);
+    expect(rebuilt.ok && rebuilt.provider !== before.provider).toBe(true); // 失效后：新实例持新 key
+  });
+
+  it('BYOK（#67）：keyLookup 返回 null 时 acquire 报缺凭据（清 key 场景）', () => {
+    const keys: Record<string, string> = { ZHIPU_API_KEY: 'k' };
+    const r = makeRegistry({ keys });
+    expect(r.acquire(r.find('glm-4.6')!).ok).toBe(true);
+    delete keys.ZHIPU_API_KEY;
+    const res = r.acquire(r.find('glm-4.6')!);
+    expect(res.ok).toBe(false);
+  });
+
   it('list 返回合并后全表', () => {
     const r = makeRegistry({ keys: {} });
     expect(r.list().some(m => m.id === 'my-vllm')).toBe(true);
