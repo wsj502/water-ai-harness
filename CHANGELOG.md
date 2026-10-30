@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+### 新增（M21 · 子级授权继承）
+
+- 子级 write/edit 的「session」授权按文件粒度**上浮**父会话引擎（`write:<路径>`），后续子代理构造时**继承**——同会话重复派生写同一文件不再二次打扰（v0.5.0 已知限制③收口）
+- 粒度红线（M15 语义不回退）：「once」不上浮；`task(write)` 的 session 授权不隐含子级写授权（派生≠写入）；**主循环裸 write 会话授权不继承**（`inheritableGrants` 只导出带参前缀 key——主循环的信任不外溢为子代理写权限）
+- PermissionEngine 新增 `initialGrants`（构造预置）与 `inheritableGrants(prefixes)`（可继承导出）；上浮在 `subApprove` 包装内完成（session 决策 → 父引擎 `grantSession`）
+- vitest 5 用例锁定语义矩阵（同文件跨子代理免问 / 跨文件仍问 / once 不上浮 / task session 不隐含 / 裸授权不继承）
+
 ### 新增（M20 · CLI 子代理时间线）
 
 - `TermRenderer` 增加 `sub_event` 折叠渲染：缩进时间线（轮次分隔行 / 工具行 + 状态符 / 文本流 / 审批结果行），与 Web M18 时间线**同语义、终端表达**——子代理过程在 CLI 从完全不可见变为结构化呈现（此前 render.ts 对 sub_event 没有任何 case，静默丢弃）

@@ -67,14 +67,25 @@ function runSubAgent(
     const subMessages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: prompt }] }];
     const subTools = opts.tools.filter(t =>
       t.spec.name !== 'task' && (mode === 'write' ? SUB_WRITE_TOOLS.has(t.spec.name) : t.risk === 'low'));
-    const subPermissions = new PermissionEngine({ autoAllowLowRisk: true });
-    // M15 审批透传：子级 write/edit（medium → ask）逐次路由到父级 approve 回调。
+    // M21 授权继承：子级引擎预置父会话的文件粒度授权（write:/edit: 前缀；裸授权不继承——
+    // 主循环的会话级放行不外溢为子代理写权限）——跨子代理同文件免重复审批。
+    const inherited = opts.permissions.inheritableGrants(['write:', 'edit:']);
+    const subPermissions = new PermissionEngine({ autoAllowLowRisk: true, initialGrants: inherited });
+    // M15 审批透传：子级 write/edit（medium → ask）逐次路由到父级 approve 回调；
     // 无审批渠道（opts.approve 缺失）→ 引擎 ask → 保守拒绝、零落盘（与主循环同语义）。
-    // 「session」授权记在子级引擎、key = write:<路径>：同文件免重复审批，跨文件/跨子代理不扩散。
+    // M21：子级「session」决策按文件粒度上浮父会话引擎（`${工具}:${路径}`）——后续子代理经继承生效；
+    // 「once」不上浮；task(write) 的 session 授权不隐含子级写授权（派生≠写入，M15 粒度不回退）。
     // shell 不在子工具集内，即便模型请求也会被默认策略拒绝。
     const subApprove: AgentLoopOptions['approve'] | undefined =
       opts.approve && parentCallId
         ? (call, reason) => opts.approve!({ ...call, id: `${parentCallId}:${call.id}` }, `[子代理] ${reason}`)
+          .then(r => {
+            if (r === 'session') {
+              const summary = opts.tools.find(t => t.spec.name === call.name)?.argSummary(call.input) ?? '';
+              opts.permissions.grantSession(`${call.name}:${summary}`); // 上浮：文件粒度 key
+            }
+            return r;
+          })
         : undefined;
     try {
       for await (const ev of agentLoop({

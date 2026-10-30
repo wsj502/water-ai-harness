@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   agentLoop, builtinTools, PermissionEngine,
-  type ChatRequest, type Provider, type StreamEvent, type WMessage,
+  type AgentLoopOptions, type ChatRequest, type Provider, type StreamEvent, type WMessage,
 } from '../packages/core/src/index.js';
 
 const seenSubToolNames: string[] = [];
@@ -497,5 +497,134 @@ describe('M15 子代理审批透传', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('M21 子级授权继承', () => {
+  /** 主循环派生 N 次 write 模式 task；每个子代理按 prompt（#k 标记）写指定文件序列 */
+  function multiTaskProvider(filesPerSub: string[][]): Provider {
+    return new (class implements Provider {
+      readonly protocol = 'openai' as const;
+      async *chat(req: ChatRequest): AsyncIterable<StreamEvent> {
+        const isSub = !req.tools?.some(t => t.name === 'task');
+        const hasToolResult = req.messages.some(m => m.role === 'tool');
+        if (isSub) {
+          const userText = (req.messages.find(m => m.role === 'user')?.parts[0] as { text?: string } | undefined)?.text ?? '';
+          const k = Number(/#(\d+)/.exec(userText)?.[1] ?? 0);
+          const files = filesPerSub[k] ?? [];
+          const done = req.messages.filter(m => m.role === 'tool').length;
+          if (done < files.length) {
+            const f = files[done]!;
+            yield { type: 'tool_use', call: { type: 'tool_use', id: `sw${k}-${done}`, name: 'write', input: { path: f, content: `v-${k}-${done}` } } };
+            yield { type: 'done', stopReason: 'tool_use' };
+          } else {
+            yield { type: 'text_delta', text: '子代理完成' };
+            yield { type: 'done', stopReason: 'end' };
+          }
+          return;
+        }
+        const n = req.messages.filter(m => m.role === 'tool').length;
+        if (n < filesPerSub.length) {
+          yield { type: 'tool_use', call: { type: 'tool_use', id: `p-${n}`, name: 'task', input: { prompt: `任务 #${n}`, mode: 'write' } } };
+          yield { type: 'done', stopReason: 'tool_use' };
+        } else {
+          yield { type: 'text_delta', text: '父级收尾' };
+          yield { type: 'done', stopReason: 'end' };
+        }
+      }
+    })();
+  }
+
+  const runLoop = async (provider: Provider, approve: AgentLoopOptions['approve'], permissions = new PermissionEngine({ autoAllowLowRisk: true })) => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'water-m21-'));
+    const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '派生' }] }];
+    const events = [];
+    try {
+      for await (const ev of agentLoop({
+        provider, model: 'mock', system: 'SYS', messages,
+        tools: builtinTools, permissions,
+        toolCtx: { cwd: tmp }, maxTurns: 10,
+        ...(approve ? { approve } : {}),
+      })) events.push(ev);
+      return { tmp, events };
+    } catch (e) { rmSync(tmp, { recursive: true, force: true }); throw e; }
+  };
+
+  it('session 授权上浮：同文件跨子代理免二次审批', async () => {
+    const writeAsked: string[] = [];
+    const { tmp, events } = await runLoop(multiTaskProvider([['a.txt'], ['a.txt']]), async call => {
+      if (call.name === 'write') {
+        writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+        return 'session';
+      }
+      return 'once';
+    });
+    try {
+      // 只在第一个子代理问一次；第二个子代理经继承放行
+      expect(writeAsked).toEqual(['a.txt']);
+      expect(readFileSync(path.join(tmp, 'a.txt'), 'utf8')).toBe('v-1-0');
+      const tasks = events.filter(e => e.type === 'tool_result' && (e as { call?: { name?: string } }).call?.name === 'task');
+      expect(tasks.length).toBe(2);
+      expect(tasks.every(t => t!.type === 'tool_result' && !t!.isError)).toBe(true);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it('跨文件不扩散：第二个子代理写别的文件仍需询问', async () => {
+    const writeAsked: string[] = [];
+    const { tmp } = await runLoop(multiTaskProvider([['a.txt'], ['b.txt']]), async call => {
+      if (call.name === 'write') {
+        writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+        return 'session';
+      }
+      return 'once';
+    });
+    try {
+      expect(writeAsked).toEqual(['a.txt', 'b.txt']); // b.txt 没继承到
+      expect(existsSync(path.join(tmp, 'b.txt'))).toBe(true);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it('once 不上浮：第二个子代理同文件仍被询问', async () => {
+    const writeAsked: string[] = [];
+    await runLoop(multiTaskProvider([['a.txt'], ['a.txt']]), async call => {
+      if (call.name === 'write') {
+        writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+        return 'once';
+      }
+      return 'once';
+    }).then(({ tmp }) => {
+      try { expect(writeAsked).toEqual(['a.txt', 'a.txt']); } finally { rmSync(tmp, { recursive: true, force: true }); }
+    });
+  });
+
+  it('task(write) 的 session 授权不隐含子级写（派生≠写入）', async () => {
+    const writeAsked: string[] = [];
+    const { tmp } = await runLoop(multiTaskProvider([['a.txt']]), async call => {
+      if (call.name === 'write') {
+        writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+        return 'once';
+      }
+      return 'session'; // task 本身给 session
+    });
+    try {
+      expect(writeAsked).toEqual(['a.txt']); // 子级写仍被询问
+      expect(existsSync(path.join(tmp, 'a.txt'))).toBe(true);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it('主循环裸 write 会话授权不继承（主循环信任不外溢）', async () => {
+    const perms = new PermissionEngine({ autoAllowLowRisk: true });
+    perms.grantSession('write'); // 模拟主循环里用户对 write 的会话级放行（无路径限定）
+    const writeAsked: string[] = [];
+    const { tmp } = await runLoop(multiTaskProvider([['a.txt']]), async call => {
+      if (call.name === 'write') {
+        writeAsked.push(String((call.input as { path?: string }).path ?? ''));
+        return 'once';
+      }
+      return 'once';
+    }, perms);
+    try {
+      expect(writeAsked).toEqual(['a.txt']); // 未继承裸授权，仍被询问
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
   });
 });
