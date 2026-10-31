@@ -160,3 +160,49 @@ describe('M19 断开宽限（Session 宽限状态机）', () => {
     expect(fired).toEqual([]);
   });
 });
+
+describe('M31 排队可见性（pending / 瞬时广播 / 跨轮游标）', () => {
+  it('pending：执行中不计入等待——live 挂住条件的状态源', () => {
+    const s = new Session('m31a');
+    s.busy = true;
+    const run = s.enqueueTurn();   // 执行中
+    const wait = s.enqueueTurn();  // 排队
+    expect(s.pendingTurns).toBe(1);
+    s.busy = false;
+    run.release();
+    expect(s.pendingTurns).toBe(1); // wait 仍在等（排队期 hold 的正是这个态）
+    wait.release();
+    expect(s.pendingTurns).toBe(0);
+  });
+
+  it('emitTransient：广播到全部订阅者；取消即停；单个订阅者异常不拖垮广播', () => {
+    const s = new Session('m31b');
+    const got: unknown[] = [];
+    const got2: unknown[] = [];
+    const un = s.subscribeTransient(ev => {
+      got.push(ev);
+      if (got.length === 1) throw new Error('boom'); // 首个订阅者首帧即抛
+    });
+    s.subscribeTransient(ev => got2.push(ev));
+    s.emitTransient({ type: 'queued', position: 1 });
+    s.emitTransient({ type: 'queued', position: 2, scope: 'global' });
+    un();
+    s.emitTransient({ type: 'queued', position: 3 });
+    expect(got).toHaveLength(2);   // 取消后不再收
+    expect(got2).toHaveLength(3);  // 异常与取消都不影响其他订阅者
+  });
+
+  it('eventsSince 跨轮游标：上一轮的陈旧 since 返回当前轮全量（多轮观察正确性基础）', () => {
+    const s = new Session('m31c');
+    s.recordEvent({ type: 'a' });
+    s.recordEvent({ type: 'b' });
+    s.recordEvent({ type: 'c' });           // run1：seq 1..3
+    expect(s.eventsSince(2)).toHaveLength(1); // 同轮内正常过滤
+    s.resetEventBuffer();                     // run2 开始（seq 重新从 1 计）
+    expect(s.eventsSince(3)).toEqual([]);     // 新轮尚无事件 → 空
+    s.recordEvent({ type: 'd' });
+    s.recordEvent({ type: 'e' });           // run2：seq 1..2
+    expect(s.eventsSince(3).map(e => e.seq)).toEqual([1, 2]); // 陈旧游标 → 当前轮全量
+    expect(s.eventsSince(1)).toHaveLength(1); // 新轮内正常过滤
+  });
+});

@@ -419,9 +419,10 @@ app.get('/api/sessions/:id/events', c => {
 
 /**
  * M29 live 长连接：`GET /stream?since=N`（SSE，帧格式与 POST 流逐帧一致）。
- * - 存量补帧（since 后全部事件）
- * - 非 busy：补完即关（刷新页面的存量补帧语义）
- * - busy：保持连接实时推送直到 finish 帧或客户端断开（15s keepalive 注释帧防代理断开）
+ * - 存量补帧（since 后全部事件）；非 busy 且无排队：补完即关（刷新页面的存量补帧语义）
+ * - busy 或排队中（M31）：保持连接实时推送——回放事件走 seq 帧，瞬时事件（queued）
+ *   走无 id 帧广播（与写者流同形状）；15s keepalive 注释帧防代理断开
+ * - M31 多轮观察：finish 帧写入完成且队列排空才收流——一个连接看完整场（含排队衔接）
  * - M19 协同：连接建立即视为重连信号（取消宽限倒计时）；live 断开不触发宽限——
  *   宽限触发权只在 POST 流（写者），live 是观察者（一个会话多观察者合法，多标签页场景）。
  *   Web 端 live 失败/中断回退 M25 轮询（/events 端点原样保留为兜底层）。
@@ -431,42 +432,53 @@ app.get('/api/sessions/:id/stream', c => {
   if (!s) return c.json({ error: 'session not found' }, 404);
   const since = Number(c.req.query('since') ?? 0) || 0;
   return streamSSE(c, async stream => {
-    const send = (frame: { id: string; event: string; data: string }): Promise<void> =>
+    const send = (frame: { id?: string; event: string; data: string }): Promise<void> =>
       stream.writeSSE(frame).catch(() => { /* 已断开：abort 清理负责停推 */ });
     let cursor = since;
-    // 1) 存量补帧（一次性；含 finish 帧照发）
+    // 1) 存量补帧（一次性；含 finish 帧照发；M31：跨轮陈旧游标由 eventsSince 语义处理）
     for (const e of s.eventsSince(cursor)) {
       cursor = e.seq;
       await send({ id: String(e.seq), event: (e.ev as { type: string }).type, data: JSON.stringify(e.ev) });
     }
-    // 2) 非 busy：补完即关
-    if (!s.busy) return;
-    // 3) busy：保持连接实时推送
+    // 2) 非 busy 且无等待：补完即关
+    if (!s.busy && s.pendingTurns === 0) return;
+    // 3) busy 或排队中：保持连接
     s.notifyReconnect(); // M19：live 连接建立 = 客户端在场
-    let finished = false;
+    if (!s.busy && s.pendingTurns > 0) {
+      // M31：排队期挂载——没赶上 enqueue 瞬时帧的观察者，补一帧当前排队状态（无 seq）
+      await send({ event: 'queued', data: JSON.stringify({ type: 'queued', position: s.pendingTurns }) });
+    }
     const flush = () => {
       for (const e of s.eventsSince(cursor)) {
         cursor = e.seq;
         const p = send({ id: String(e.seq), event: (e.ev as { type: string }).type, data: JSON.stringify(e.ev) });
         if ((e.ev as { type?: string }).type === 'finish') {
-          finished = true;
-          // 关闭竞态：finish 帧写入是异步的——等它真正落进连接再收尾（否则客户端丢最后一帧）
-          void p.then(() => done());
+          // 关闭竞态：finish 帧写入是异步的——等它真正落进连接再判定收尾（否则客户端丢最后一帧）。
+          // M31：队列未排空则不收流（多轮观察）；检查放在写入完成时点，进一步缩小与
+          // 「finish 后新消息入队」的竞态窗口
+          void p.then(() => { if (s.pendingTurns === 0) done(); });
         }
       }
     };
+    // M31：瞬时事件（queued）——无 seq 帧，与写者流同形状
+    const unsubTransient = s.subscribeTransient(ev => {
+      void send({ event: (ev as { type: string }).type, data: JSON.stringify(ev) });
+    });
     let done!: () => void;
     const doneP = new Promise<void>(r => { done = r; });
     const unsub = s.subscribe(() => { flush(); });
     const ka = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '' }).catch(() => {}); }, 15_000);
-    // 兜底：busy 结束（含订阅信号丢失的竞态窗口）延迟一拍收尾（等尾部帧写入完成）
-    const watchdog = setInterval(() => { if (!s.busy || c.req.raw.signal.aborted) setTimeout(done, 100); }, 500);
+    // 兜底：busy 与队列都排空（含订阅信号丢失的竞态窗口 / 排队者中途放弃）延迟一拍收尾
+    const watchdog = setInterval(() => {
+      if ((s.pendingTurns === 0 && !s.busy) || c.req.raw.signal.aborted) setTimeout(done, 100);
+    }, 500);
     const onAbort = () => done();
     c.req.raw.signal.addEventListener('abort', onAbort);
     try {
       await doneP;
     } finally {
       unsub();
+      unsubTransient();
       clearInterval(ka);
       clearInterval(watchdog);
       c.req.raw.signal.removeEventListener('abort', onAbort);
@@ -590,6 +602,10 @@ app.post('/api/sessions/:id/messages', async c => {
     return c.json({ error: '队列已满（5 条）：请稍候再发' }, 429);
   }
   const turn = s.enqueueTurn();
+  if (turn.position > 0) {
+    // M31：排队瞬时帧广播给 live 观察者（无 seq，不进回放缓冲；形状与下方写者流逐帧一致）
+    s.emitTransient({ type: 'queued', position: turn.position });
+  }
 
   return streamSSE(c, async stream => {
     // M19：安全发送——宽限期内客户端可能已断开，SSE 写失败不能中断运行（事件已进回放缓冲）
@@ -615,6 +631,7 @@ app.post('/api/sessions/:id/messages', async c => {
         event: 'queued',
         data: JSON.stringify({ type: 'queued', position: slot.position, scope: 'global' }),
       });
+      s.emitTransient({ type: 'queued', position: slot.position, scope: 'global' }); // M31：live 观察者同帧
     }
     await slot.ready;
     if (c.req.raw.signal.aborted || store.get(s.id) !== s) {
