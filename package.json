@@ -9,6 +9,7 @@
     "apps/*"
   ],
   "scripts": {
+    "bump": "node scripts/bump-version.mjs",
     "dev": "tsx scripts/dev-chat.ts",
     "dev:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& tsx watch apps/server/src/index.ts",
     "start:server": "set WATER_PLUGIN_DIRS=%CD%\\plugins&& node apps/server/dist/index.js",
