@@ -248,10 +248,11 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
     }
 
     // ---- 执行工具：审批 → 执行 → 结果回填 ----
+    // M27：同轮多工具并发执行（WATER_PARALLEL_TOOLS=0 回退串行）。
+    // 单个工具的完整执行流：事件经 push 发射（串行顺序 push，并发进队列泵实时排水）。
     const resultParts: Part[] = [];
-
-    for (const call of toolCalls) {
-      yield { type: 'tool_pending', call };
+    const runOne = async (call: ToolUsePart, push: (ev: LoopEvent) => void): Promise<void> => {
+      push({ type: 'tool_pending', call });
 
       const tool = opts.tools.find(t => t.spec.name === call.name);
       if (!tool) {
@@ -259,7 +260,7 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
           type: 'tool_result', toolUseId: call.id,
           content: `错误：未知工具 ${call.name}`, isError: true,
         });
-        continue;
+        return;
       }
 
       // 权限检查（M12：动态风险——riskFor 按实参计算，如 task write 模式提升为 high）
@@ -275,19 +276,19 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
           else {
             if (r === 'session') permissions.grantSession(`${call.name}:${summary}`);
             decision = 'allow';
-            yield { type: 'tool_approved', call, scope: r };
+            push({ type: 'tool_approved', call, scope: r });
           }
         }
       }
 
       if (decision === 'deny') {
-        yield { type: 'tool_denied', call };
+        push({ type: 'tool_denied', call });
         resultParts.push({
           type: 'tool_result', toolUseId: call.id,
           content: '用户拒绝了本次工具调用。请不要重试相同操作，改为说明你可以如何继续。',
           isError: true,
         });
-        continue;
+        return;
       }
 
       // 插件钩子：beforeToolCall 返回 false → 阻止执行
@@ -301,59 +302,89 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
         } catch { /* 钩子异常不阻断主流程 */ }
       }
       if (blockedBy) {
-        yield { type: 'tool_denied', call };
+        push({ type: 'tool_denied', call });
         resultParts.push({
           type: 'tool_result', toolUseId: call.id,
-          content: `插件钩子阻止了 ${call.name} 的执行。`, isError: true,
+          content: `插件钩子阻止了 ${blockedBy} 的执行。`, isError: true,
         });
-        continue;
+        return;
       }
 
       const started = Date.now();
       try {
-        // M12 事件泵：工具执行期间把子代理事件实时 yield（sub_event 包装，关联当前 callId）。
-        // 实现方式：临时包一层 spawnTask，把 onEvent 注入当前泵——工具串行执行，无并发竞争。
+        // M12 事件泵：工具执行期间把子代理事件实时发射（sub_event 包装，关联当前 callId）。
+        // M27：execCtx 每工具克隆——原「临时替换共享 execCtx.spawnTask」在并发下会互相覆盖；
+        // 克隆体内包装 spawnTask，注入本工具的泵 + M15 parentCallId（子级审批命名空间）。
         const subQ: LoopEvent[] = [];
         let wake: (() => void) | null = null;
         let settled = false;
-        const originalSpawn = execCtx.spawnTask;
-        if (originalSpawn) {
-          // M15：除 onEvent 外再注入 parentCallId（当前 task 调用）——子级审批桥按它命名空间
-          execCtx.spawnTask = (prompt: string, so?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void; parentCallId?: string }) =>
-            originalSpawn(prompt, {
-              ...so,
-              onEvent: ev => { subQ.push(ev); wake?.(); so?.onEvent?.(ev); },
-              parentCallId: call.id,
-            });
-        }
+        const toolCtx: ToolContext = {
+          ...execCtx,
+          ...(execCtx.spawnTask ? {
+            spawnTask: (prompt: string, so?: { mode?: 'read' | 'write'; onEvent?: (ev: LoopEvent) => void; parentCallId?: string }) =>
+              execCtx.spawnTask!(prompt, {
+                ...so,
+                onEvent: ev => { subQ.push(ev); wake?.(); so?.onEvent?.(ev); },
+                parentCallId: call.id,
+              }),
+          } : {}),
+        };
 
         let runResult: string;
         try {
-          const runP = tool.run(call.input, execCtx)
+          const runP = tool.run(call.input, toolCtx)
             .finally(() => { settled = true; wake?.(); });
           while (!settled || subQ.length > 0) {
             while (subQ.length > 0) {
-              yield { type: 'sub_event', callId: call.id, ev: subQ.shift()! };
+              push({ type: 'sub_event', callId: call.id, ev: subQ.shift()! });
             }
             if (!settled) await new Promise<void>(r => { wake = r; });
           }
           runResult = await runP;
         } finally {
-          if (originalSpawn) execCtx.spawnTask = originalSpawn;
+          // M27：toolCtx 为克隆体，无需恢复共享状态
         }
 
         const result = runResult;
         const durationMs = Date.now() - started;
         for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, true, durationMs); } catch { /* 忽略 */ } }
-        yield { type: 'tool_result', call, result, isError: false, durationMs };
+        push({ type: 'tool_result', call, result, isError: false, durationMs });
         resultParts.push({ type: 'tool_result', toolUseId: call.id, content: result });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const durationMs = Date.now() - started;
         for (const h of opts.hooks ?? []) { try { h.afterToolCall?.(call.name, false, durationMs); } catch { /* 忽略 */ } }
-        yield { type: 'tool_result', call, result: msg, isError: true, durationMs };
+        push({ type: 'tool_result', call, result: msg, isError: true, durationMs });
         resultParts.push({ type: 'tool_result', toolUseId: call.id, content: `工具执行错误：${msg}`, isError: true });
       }
+    };
+
+    // M27 并发判定：同轮多工具且未显式关闭（WATER_PARALLEL_TOOLS=0 回退串行）。
+    // 语义：allSettled 失败不中断同伴；tool 消息按完成序回填（tool_use_id 匹配，双协议兼容）；
+    // 已知语义：同文件并发写后写覆盖（无锁，与主流 harness 一致，靠模型自律）。
+    const parallel = toolCalls.length > 1 && process.env.WATER_PARALLEL_TOOLS !== '0';
+
+    if (!parallel) {
+      // 串行路径：顺序执行顺序发射（与历史行为一致）
+      for (const call of toolCalls) {
+        const serial: LoopEvent[] = [];
+        await runOne(call, ev => { serial.push(ev); });
+        for (const ev of serial) yield ev;
+      }
+    } else {
+      // M27 并发泵：与 M12 子代理泵同构——任务把事件 push 进队列，主循环实时排水 yield
+      //（审批卡/子代理直播照常实时到达；seq 按到达序，回放一致）
+      const q: LoopEvent[] = [];
+      let wake: (() => void) | null = null;
+      let settled = false;
+      const push = (ev: LoopEvent) => { q.push(ev); wake?.(); };
+      const all = Promise.allSettled(toolCalls.map(call => runOne(call, push)))
+        .finally(() => { settled = true; wake?.(); });
+      while (!settled || q.length > 0) {
+        while (q.length > 0) yield q.shift()!;
+        if (!settled) await new Promise<void>(r => { wake = r; });
+      }
+      await all;
     }
 
     // 结果回填为 tool 消息，进入下一轮

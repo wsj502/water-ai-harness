@@ -43,6 +43,27 @@ export class MockProvider implements Provider {
       yield { type: 'done', stopReason: 'tool_use' };
       return;
     }
+    // M27 场景剧本：[[mock:parallel]] 同轮发两个 read（并发执行的确定性复现）
+    if (userText.includes('[[mock:parallel]]')) {
+      if (!hasToolResult) {
+        yield { type: 'thinking_delta', text: '（mock）一轮并发读两个文件…' };
+        yield {
+          type: 'tool_use',
+          call: { type: 'tool_use', id: 'mock-para-a', name: 'write', input: { path: 'para-a.txt', content: 'A' } },
+        };
+        yield {
+          type: 'tool_use',
+          call: { type: 'tool_use', id: 'mock-para-b', name: 'write', input: { path: 'para-b.txt', content: 'B' } },
+        };
+        yield { type: 'usage', inputTokens: 90, outputTokens: 18 };
+        yield { type: 'done', stopReason: 'tool_use' };
+      } else {
+        yield { type: 'text_delta', text: '（mock）两个并发写入均已完成。' };
+        yield { type: 'usage', inputTokens: 110, outputTokens: 26 };
+        yield { type: 'done', stopReason: 'end' };
+      }
+      return;
+    }
     // M17 场景剧本：[[mock:m17tool:<工具名>]] 让 mock 调用指定的（配置式声明）工具
     const m17 = userText.match(/\[\[mock:m17tool:([A-Za-z0-9_-]+)\]\]/);
     if (m17 && !hasToolResult) {

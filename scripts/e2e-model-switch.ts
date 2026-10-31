@@ -627,6 +627,19 @@ async function main(): Promise<void> {
     ok(seenHttp.some(x => x.q === 'hello-m17' && x.auth === 'Bearer e2e-demo-token'),
       'M22 $env: 凭据插值到达服务端（token 只存在于服务端环境，不入 config/事件流）');
 
+    // ---- 18. 同轮工具并发执行（M27：[[mock:parallel]] 一轮两个 write）----
+    const sidP = await mkSession();
+    const evP = await streamWithApprovals(sidP, '[[mock:parallel]] 一轮并发写两个文件', 'once');
+    ok(evP.filter(e => e.type === 'tool_pending').length === 2, 'M27 同轮两个 tool_pending（并发发起）');
+    const resP = evP.filter(e => e.type === 'tool_result');
+    ok(resP.length === 2 && resP.every(r => !(r as { isError?: boolean }).isError), 'M27 两个并发结果均成功（allSettled）');
+    ok(existsSync(path.join(workdir, 'para-a.txt')) && existsSync(path.join(workdir, 'para-b.txt')),
+      'M27 两文件真实落盘（并发写入互不干扰）');
+    ok(evP.at(-1)?.type === 'finish', 'M27 并发轮正常 finish');
+    const repP = await jfetch<{ events: Array<{ seq: number; ev: Record<string, unknown> }> }>(`${BASE}/api/sessions/${sidP}/events?since=0`);
+    ok(repP.body.events.filter(e => e.ev.type === 'tool_result').length === 2,
+      'M27 回放含两个 tool_result（并发到达序 seq 化，回放一致）');
+
     // ---- 17. BYOK：Web 端安全录入 API Key（#67：收 key 不收 baseUrl）----
     // 主 server 是 mock（hasKey 恒真，测不出动态性）——起第二个「无凭据非 mock」server：
     // 验证无 key 也能启动（BYOK 留口）+ hasKey 动态翻转 + 任何响应永不回显完整 key 值
