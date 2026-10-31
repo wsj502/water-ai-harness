@@ -63,7 +63,7 @@ flowchart LR
     PLUG[ESM 插件 + MCP 桥] --> TOOL
 ```
 
-## 功能矩阵（v0.9.0）
+## 功能矩阵（v0.10.0）
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
@@ -78,7 +78,7 @@ flowchart LR
 | 上下文管理 | ✅ | token 估算 + 三级确定性压缩（裁旧 tool_result → 丢最旧轮次 → 孤儿清退） |
 | 容错重试 | ✅ | 429/5xx 指数退避，只在流首帧前重试；中断穿透；120s 超时 |
 | 权限与审批 | ✅ | 低/中/高三级风险 + **动态风险**（riskFor 按实参）；once/session/deny；审批桥打通 SSE 与反向 POST；**审批帧全量入回放缓冲 + 断开宽限期（重连不误杀，超时全拒）** |
-| SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话 |
+| SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话；**live 长连接实时推送（M29，轮询自动回退兜底）** |
 | Web 体验 | ✅ | 零依赖 markdown 渲染（XSS 架构免疫）、行级 diff、子代理过程直播、五页视图、**侧栏拖拽调宽/智能吸底/分段归档/跨页导航闭环/流式防串扰（streamGen）** |
 | 三端 | ✅ | CLI（`/model` `/compact` `/system` + **子代理时间线渲染** + `--quiet`）/ Web（**自适应接流退避**）/ Tauri 桌面（SEA sidecar 单文件，**v0.7 已回归**：凭据判定与内核对齐 + 冒烟 11 断言） |
 | 插件与扩展 | ✅ | 进程内 ESM + manifest 权限治理 + **MCP 多 server（mcpServers{} 业界形状）** + **配置式命令（零代码）** + **配置式声明工具（M17 prompt 型 / M22 http 型：域名白名单 + $env: 凭据插值 + high 逐次审批）** |
@@ -137,6 +137,7 @@ npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，全量�
 - [x] v0.7.0（M24-M26）：桌面端回归（SEA sidecar 重建 + 凭据判定对齐）/ 体验调优（接流轮询退避 / CLI --quiet / 授权 key 路径归一化）/ 文章补遗
 - [x] v0.8.0：容器交付落地与 BYOK（dockerignore/BYOK 前端录入 key/UI 五项+导航闭环/跨会话流污染修复）
 - [x] v0.9.0（M27-M28）：同轮工具并发执行（事件泵/execCtx 克隆/allSettled/env 回退）+ 02 文章补遗
+- [x] v0.10.0（M29-M30）：接流长连接（live SSE 实时推送 + 轮询回退兜底 + 宽限权责分离）+ 03 文章补遗
 
 ## 贡献与安全
 

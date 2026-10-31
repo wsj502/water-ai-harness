@@ -194,7 +194,7 @@ app.get('/api/config', c => c.json({
   baseUrl: mock ? '(mock)' : cfg.baseUrl,
   model: cfg.model,
   workspace: cfg.cwd,
-  version: '0.9.0',
+  version: '0.10.0',
   // M16：跨会话并发上限（会话间并行、超限跨会话排队）
   maxParallelSessions: MAX_PARALLEL_SESSIONS,
   // 只暴露「有没有」，永不暴露 key 本身（BYOK 后默认模型凭据就绪也计入）
