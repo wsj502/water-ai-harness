@@ -417,6 +417,63 @@ app.get('/api/sessions/:id/events', c => {
   return c.json({ events: s.eventsSince(since), busy: s.busy });
 });
 
+/**
+ * M29 live 长连接：`GET /stream?since=N`（SSE，帧格式与 POST 流逐帧一致）。
+ * - 存量补帧（since 后全部事件）
+ * - 非 busy：补完即关（刷新页面的存量补帧语义）
+ * - busy：保持连接实时推送直到 finish 帧或客户端断开（15s keepalive 注释帧防代理断开）
+ * - M19 协同：连接建立即视为重连信号（取消宽限倒计时）；live 断开不触发宽限——
+ *   宽限触发权只在 POST 流（写者），live 是观察者（一个会话多观察者合法，多标签页场景）。
+ *   Web 端 live 失败/中断回退 M25 轮询（/events 端点原样保留为兜底层）。
+ */
+app.get('/api/sessions/:id/stream', c => {
+  const s = store.get(c.req.param('id'));
+  if (!s) return c.json({ error: 'session not found' }, 404);
+  const since = Number(c.req.query('since') ?? 0) || 0;
+  return streamSSE(c, async stream => {
+    const send = (frame: { id: string; event: string; data: string }): Promise<void> =>
+      stream.writeSSE(frame).catch(() => { /* 已断开：abort 清理负责停推 */ });
+    let cursor = since;
+    // 1) 存量补帧（一次性；含 finish 帧照发）
+    for (const e of s.eventsSince(cursor)) {
+      cursor = e.seq;
+      await send({ id: String(e.seq), event: (e.ev as { type: string }).type, data: JSON.stringify(e.ev) });
+    }
+    // 2) 非 busy：补完即关
+    if (!s.busy) return;
+    // 3) busy：保持连接实时推送
+    s.notifyReconnect(); // M19：live 连接建立 = 客户端在场
+    let finished = false;
+    const flush = () => {
+      for (const e of s.eventsSince(cursor)) {
+        cursor = e.seq;
+        const p = send({ id: String(e.seq), event: (e.ev as { type: string }).type, data: JSON.stringify(e.ev) });
+        if ((e.ev as { type?: string }).type === 'finish') {
+          finished = true;
+          // 关闭竞态：finish 帧写入是异步的——等它真正落进连接再收尾（否则客户端丢最后一帧）
+          void p.then(() => done());
+        }
+      }
+    };
+    let done!: () => void;
+    const doneP = new Promise<void>(r => { done = r; });
+    const unsub = s.subscribe(() => { flush(); });
+    const ka = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '' }).catch(() => {}); }, 15_000);
+    // 兜底：busy 结束（含订阅信号丢失的竞态窗口）延迟一拍收尾（等尾部帧写入完成）
+    const watchdog = setInterval(() => { if (!s.busy || c.req.raw.signal.aborted) setTimeout(done, 100); }, 500);
+    const onAbort = () => done();
+    c.req.raw.signal.addEventListener('abort', onAbort);
+    try {
+      await doneP;
+    } finally {
+      unsub();
+      clearInterval(ka);
+      clearInterval(watchdog);
+      c.req.raw.signal.removeEventListener('abort', onAbort);
+    }
+  });
+});
+
 app.post('/api/sessions', async c => {
   const body = await c.req.json<Record<string, unknown>>().catch((): Record<string, unknown> => ({}));
   // M7B：工作区绑定——创建时定死，只接受注册表内的 id（防目录逃逸）

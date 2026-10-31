@@ -95,8 +95,17 @@ export class Session {
   recordEvent(ev: unknown): number {
     this.events.push({ seq: ++this.seq, ev });
     if (this.events.length > 300) this.events.shift();
+    // M29：通知 live 订阅者（长连接推送的数据源）；订阅者异常不影响记录
+    for (const fn of this.subs) { try { fn(this.seq); } catch { /* 单个订阅者故障不拖垮记录 */ } }
     return this.seq;
   }
+
+  /** M29：live 流订阅——recordEvent 时回调（参数为最新 seq）。返回取消函数 */
+  subscribe(fn: (seq: number) => void): () => void {
+    this.subs.add(fn);
+    return () => { this.subs.delete(fn); };
+  }
+  private subs = new Set<(seq: number) => void>();
 
   /** 每条消息运行开始时清空（缓冲只覆盖"当前这一跑"，历史由 messages 端点负责） */
   resetEventBuffer(): void {

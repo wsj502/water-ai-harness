@@ -640,6 +640,47 @@ async function main(): Promise<void> {
     ok(repP.body.events.filter(e => e.ev.type === 'tool_result').length === 2,
       'M27 回放含两个 tool_result（并发到达序 seq 化，回放一致）');
 
+    // ---- 19. live 长连接（M29：GET /stream 实时推送，轮询降级为回退）----
+    // 19a. 非 busy：存量补帧后补完即关（EOF，无需断开）
+    {
+      const sidL = await mkSession();
+      await readSSE(`${BASE}/api/sessions/${sidL}/messages`, post(sidL)); // 先跑完一轮
+      const liveA = await readSSE(`${BASE}/api/sessions/${sidL}/stream?since=0`);
+      ok(liveA.length > 0 && liveA.at(-1)?.type === 'finish', 'M29 非 busy live：存量补帧含 finish');
+      const evtA = await jfetch<{ events: unknown[] }>(`${BASE}/api/sessions/${sidL}/events?since=0`);
+      ok(liveA.length === evtA.body.events.length, 'M29 live 补帧与 /events 回放逐帧等量');
+    }
+    // 19b. busy：POST 流与 live 流并行——live 实时收到完整事件直到 finish
+    {
+      const sidL = await mkSession();
+      const postDone = readSSE(`${BASE}/api/sessions/${sidL}/messages`, post(sidL));
+      // 等 server 确立 busy（真实接流场景 busy 已知；测试需消除与 POST 入队的竞态）
+      for (let i = 0; i < 50; i++) {
+        const st = await jfetch<{ busy: boolean }>(`${BASE}/api/sessions/${sidL}/events?since=0`);
+        if (st.body.busy) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      const liveB = await readSSE(`${BASE}/api/sessions/${sidL}/stream?since=0`);
+      await postDone;
+      const typesB = liveB.map(e => e.type);
+      ok(typesB.includes('turn_start') && typesB.includes('finish'),
+        'M29 busy live：实时收到 turn_start 与 finish', typesB.join(','));
+      ok(liveB.length >= 3, `M29 busy live：帧数完整（${liveB.length} 帧）`);
+    }
+    // 19c. 宽限协同：POST 流断开 → live 连接建立（重连信号）→ 运行存活，live 收完含 finish
+    {
+      const sidL = await mkSession();
+      const respL = await fetch(`${BASE}/api/sessions/${sidL}/messages`, post(sidL));
+      const readerL = respL.body!.getReader();
+      await readerL.read();          // 收到首帧即断开（触发宽限）
+      await readerL.cancel();
+      await new Promise(r => setTimeout(r, 300)); // 宽限期开始
+      const liveC = await readSSE(`${BASE}/api/sessions/${sidL}/stream?since=0`); // live 建立 = 重连信号
+      ok(liveC.at(-1)?.type === 'finish', 'M29 宽限协同：断开后 live 接续收完（运行未被误杀）');
+      const histC = await jfetch<{ messages: unknown[] }>(`${BASE}/api/sessions/${sidL}/messages`);
+      ok(histC.body.messages.length >= 2, 'M29 宽限协同：运行完整入史');
+    }
+
     // ---- 17. BYOK：Web 端安全录入 API Key（#67：收 key 不收 baseUrl）----
     // 主 server 是 mock（hasKey 恒真，测不出动态性）——起第二个「无凭据非 mock」server：
     // 验证无 key 也能启动（BYOK 留口）+ hasKey 动态翻转 + 任何响应永不回显完整 key 值
