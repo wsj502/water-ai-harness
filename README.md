@@ -80,7 +80,7 @@ flowchart LR
 | 权限与审批 | ✅ | 低/中/高三级风险 + **动态风险**（riskFor 按实参）；once/session/deny；审批桥打通 SSE 与反向 POST；**审批帧全量入回放缓冲 + 断开宽限期（重连不误杀，超时全拒）** |
 | SSE 事件回放 | ✅ | 帧 id/seq + `?since=` 增量端点；断线补帧；刷新接上 busy 会话；**live 长连接实时推送（M29，轮询自动回退兜底）** |
 | Web 体验 | ✅ | 零依赖 markdown 渲染（XSS 架构免疫）、行级 diff、子代理过程直播、五页视图、**侧栏拖拽调宽/智能吸底/分段归档/跨页导航闭环/流式防串扰（streamGen）** |
-| 三端 | ✅ | CLI（`/model` `/compact` `/system` + **子代理时间线渲染** + `--quiet`）/ Web（**自适应接流退避**）/ Tauri 桌面（SEA sidecar 单文件，**v0.7 已回归**：凭据判定与内核对齐 + 冒烟 11 断言） |
+| 三端 | ✅ | CLI（`/model` `/compact` `/system` + **子代理时间线渲染** + `--quiet`）/ Web（**live 长连接优先 + 轮询回退**）/ Tauri 桌面（SEA sidecar 单文件，**v0.10 安装包随 Release 资产交付**：冒烟 13 断言含 BYOK/live，见 #88） |
 | 插件与扩展 | ✅ | 进程内 ESM + manifest 权限治理 + **MCP 多 server（mcpServers{} 业界形状）** + **配置式命令（零代码）** + **配置式声明工具（M17 prompt 型 / M22 http 型：域名白名单 + $env: 凭据插值 + high 逐次审批）** |
 | SYSTEM 可配 | ✅ | env > config.json > 默认；各工作区自己的 AGENTS.md |
 | 持久化 | ✅ | node:sqlite 零依赖；会话/任务/归档/工作区绑定落库重启恢复 |
