@@ -6,7 +6,7 @@
 services:
   water:
     build: .
-    image: water:0.7.0
+    image: water:0.10.0
     container_name: water
     ports:
       - "3210:3210"

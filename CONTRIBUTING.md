@@ -80,6 +80,7 @@ scope 惯例：`core` / `server` / `web` / `cli` / `desktop` / `plugins` / `ci`�
 ## 版本与发布
 
 - 遵循 [语义化版本](https://semver.org/lang/zh-CN/)：破坏性变更升主版本，新功能升次版本，修复升补丁版本
+- 版本号统一由脚本管理（清单显式化见 `scripts/bump-version.mjs`）：发版时 `npm run bump -- --set X.Y.Z` 一次同步 10 处（**含 docker-compose 镜像标签**），合并前 `npm run bump -- --check` 自检一致性
 - 发布流程：更新 `CHANGELOG.md`（把 Unreleased 段落定稿为版本号）→ 合入 main → 打 tag `vX.Y.Z` → GitHub Release（附重大变更说明）
 - milestone 对应版本号，PR/issue 关联到对应 milestone
 
