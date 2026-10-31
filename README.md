@@ -54,7 +54,7 @@ flowchart LR
         CLI[water chat] --- WEB[React Web] --- DESK[Tauri 桌面]
     end
     subgraph 内核 water-core
-        LOOP[Agent Loop<br/>压缩·审批·失控防护] --> PROV[Provider Registry<br/>双协议适配]
+        LOOP[Agent Loop<br/>压缩·审批·失控防护<br/>**同轮工具并发执行**] --> PROV[Provider Registry<br/>双协议适配]
         LOOP --> TOOL[内置工具 ×7<br/>read/write/edit/grep/glob/shell/task]
         LOOP --> PERM[权限引擎<br/>三级风险 + 会话记忆]
     end
@@ -63,7 +63,7 @@ flowchart LR
     PLUG[ESM 插件 + MCP 桥] --> TOOL
 ```
 
-## 功能矩阵（v0.8.0）
+## 功能矩阵（v0.9.0）
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
@@ -84,7 +84,7 @@ flowchart LR
 | 插件与扩展 | ✅ | 进程内 ESM + manifest 权限治理 + **MCP 多 server（mcpServers{} 业界形状）** + **配置式命令（零代码）** + **配置式声明工具（M17 prompt 型 / M22 http 型：域名白名单 + $env: 凭据插值 + high 逐次审批）** |
 | SYSTEM 可配 | ✅ | env > config.json > 默认；各工作区自己的 AGENTS.md |
 | 持久化 | ✅ | node:sqlite 零依赖；会话/任务/归档/工作区绑定落库重启恢复 |
-| 测试 | ✅ | vitest 94 用例（协议 golden/上下文/子代理/摘要/渲染 XSS/排队闸门/子级审批/跨会话闸门/时间线折叠/配置式工具/断开宽限/CLI 时间线/授权继承[**含路径归一化**]/http 工具，**源码别名解耦构建产物**）+ 离线 E2E 87 断言，双平台 CI |
+| 测试 | ✅ | vitest 102 用例（协议 golden/上下文/子代理/摘要/渲染 XSS/排队闸门/子级审批/跨会话闸门/时间线折叠/配置式工具/断开宽限/CLI 时间线/授权继承[**含路径归一化**]/http 工具/**同轮并发执行**，**源码别名解耦构建产物**）+ 离线 E2E，双平台 CI |
 | Docker 交付 | ✅ | 多阶段镜像 + 单进程静态托管形态；**`.dockerignore` 构建上下文 <1MB**（#65） |
 
 ## 目录结构
@@ -136,6 +136,7 @@ npm run build && npm run test:e2e   # 离线 E2E（拉起真实 server，全量�
 - [x] v0.6.0（M19-M23）：审批回放统一（断开宽限期）/ CLI 子代理时间线 / 子级授权继承 / HTTP 型配置工具（白名单+凭据插值）/ 文章第三批
 - [x] v0.7.0（M24-M26）：桌面端回归（SEA sidecar 重建 + 凭据判定对齐）/ 体验调优（接流轮询退避 / CLI --quiet / 授权 key 路径归一化）/ 文章补遗
 - [x] v0.8.0：容器交付落地与 BYOK（dockerignore/BYOK 前端录入 key/UI 五项+导航闭环/跨会话流污染修复）
+- [x] v0.9.0（M27-M28）：同轮工具并发执行（事件泵/execCtx 克隆/allSettled/env 回退）+ 02 文章补遗
 
 ## 贡献与安全
 
