@@ -277,4 +277,38 @@ export const api = {
   eventsSince: (sid: string, since: number) =>
     fetch(`${BASE}/api/sessions/${sid}/events?since=${since}`)
       .then(r => json<{ events: Array<{ seq: number; ev: ServerEvent }>; busy: boolean }>(r)),
+
+  /**
+   * M29 live 长连接：GET /stream?since=N（SSE）——存量补帧后（busy 时）实时推送直到 finish/EOF。
+   * 帧解析与 streamMessage 同构；连接异常由调用方回退 M25 轮询。
+   */
+  async streamEvents(sid: string, since: number, onEvent: (ev: ServerEvent, id?: number) => void, signal?: AbortSignal): Promise<void> {
+    const resp = await fetch(`${BASE}/api/sessions/${sid}/stream?since=${since}`, { signal: signal ?? null });
+    if (!resp.ok || !resp.body) {
+      const t = await resp.text().catch(() => '');
+      throw new Error(`HTTP ${resp.status}: ${t.slice(0, 200)}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const idLine = frame.split('\n').find(l => l.startsWith('id:'));
+        const frameId = idLine ? Number(idLine.slice(3).trim()) : undefined;
+        const dataLines = frame.split('\n')
+          .filter(l => l.startsWith('data:'))
+          .map(l => l.slice(5).replace(/^ /, ''));
+        if (dataLines.length === 0) continue; // keepalive 注释帧/空帧
+        try {
+          onEvent(JSON.parse(dataLines.join('\n')) as ServerEvent, Number.isFinite(frameId) ? frameId : undefined);
+        } catch { /* 跳过坏帧 */ }
+      }
+    }
+  },
 };

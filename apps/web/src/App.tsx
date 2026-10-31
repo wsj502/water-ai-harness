@@ -42,6 +42,7 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [pendingWs, setPendingWs] = useState('default');
   const abortRef = useRef<AbortController | null>(null);
+  const liveAbortRef = useRef<AbortController | null>(null); // M29：live 长连接的独立中断器（与 send 流分离）
   const scrollRef = useRef<HTMLDivElement>(null);
   /**
    * #73 流归属代际：每次切换/新建会话 +1——旧会话的事件泵（SSE handle /
@@ -83,6 +84,7 @@ export default function App() {
     setView('chat'); // #71：任何页面点会话（最近/归档列表/任务跳转）都切回会话视图展示
     const gen = ++streamGen.current; // #73：作废旧会话的事件泵（接流轮询/补帧循环见代际检查）
     abortRef.current?.abort();       // 断开旧 SSE（服务端宽限期照常保护运行）
+    liveAbortRef.current?.abort();   // M29：断开旧 live 流
     setActiveId(id);
     setError(null);
     setUsage(null);
@@ -100,16 +102,31 @@ export default function App() {
         setBlocks(hydrateBlocks(h.messages.slice(0, lastUser + 1)));
         setBusy(true);
         void (async () => {
+          const applyEv = (ev: ServerEvent) => {
+            if (ev.type === 'usage') setUsage({ input: ev.inputTokens, output: ev.outputTokens });
+            setBlocks(bs => applyEvent(bs, ev));
+          };
+          // M29：live 长连接优先（事件零延迟，finish 后服务端关连接）；失败/提前 EOF 回退 M25 轮询
           try {
-            // M25：自适应退避——有新事件重置到 250ms（跟手），空转逐级退避封顶 1200ms（不轰炸）
+            const acLive = new AbortController();
+            liveAbortRef.current = acLive;
+            let fin = false;
+            await api.streamEvents(id, 0, ev => {
+              applyEv(ev);
+              if (ev.type === 'finish') fin = true;
+            }, acLive.signal);
+            if (gen !== streamGen.current) return;
+            if (!fin) throw new Error('live 流在 finish 前关闭');
+          } catch {
+            if (gen !== streamGen.current) return;
+            // M25 轮询回退（live 不可用环境的兜底）：自适应退避——有新事件 250ms，空转封顶 1200ms
             let cursor = 0;
             let delay = 250;
             for (;;) {
               const { events, busy: still } = await api.eventsSince(id, cursor);
               if (gen !== streamGen.current) return; // #73：已切走，停止灌旧会话事件
               for (const e of events) {
-                if (e.ev.type === 'usage') setUsage({ input: e.ev.inputTokens, output: e.ev.outputTokens });
-                setBlocks(bs => applyEvent(bs, e.ev));
+                applyEv(e.ev);
                 cursor = Math.max(cursor, e.seq);
               }
               if (events.some(e => (e.ev as { type: string }).type === 'finish')) break;
@@ -117,8 +134,7 @@ export default function App() {
               await new Promise(r => setTimeout(r, delay));
               delay = events.length > 0 ? 250 : Math.min(delay * 2, 1200);
             }
-          } catch { /* 接流失败则保持历史视图 */ }
-          finally { if (gen === streamGen.current) setBusy(false); } // #73：旧泵不清新会话的 busy
+          } finally { if (gen === streamGen.current) setBusy(false); } // #73：旧泵不清新会话的 busy
           api.listSessions().then(setSessions).catch(() => {});
         })();
       } else {
@@ -165,6 +181,20 @@ export default function App() {
         }, ac.signal);
       } catch (streamErr) {
         if (ac.signal.aborted) throw streamErr; // 用户主动中断，不补帧
+        // M29：断线补帧 live 优先（POST 流断开后用长连接续收，事件零延迟）；失败回退 M25 轮询
+        try {
+          const acLive = new AbortController();
+          liveAbortRef.current = acLive;
+          let fin = false;
+          await api.streamEvents(sid, lastSeq, ev => {
+            handle(ev);
+            if (ev.type === 'finish') fin = true;
+          }, acLive.signal);
+          if (sendGen !== streamGen.current) return;
+          if (fin) { api.listSessions().then(setSessions).catch(() => {}); return; }
+          if (lastSeq === 0) throw new Error('live 无补帧'); // 连接被环境拒绝 → 轮询兜底
+          throw new Error('live 流在 finish 前关闭');
+        } catch { /* 落入轮询回退 */ }
         const deadline = Date.now() + 10 * 60_000;
         // M25：与 busy 接流同款自适应退避（有帧 250ms / 空转封顶 1200ms）
         let delay = 250;
@@ -192,6 +222,7 @@ export default function App() {
 
   const newSession = useCallback(() => {
     abortRef.current?.abort();
+    liveAbortRef.current?.abort(); // M29：live 流一并作废
     streamGen.current++; // #73：新建也作废所有事件泵
     setActiveId(null);
     setBlocks([]);
