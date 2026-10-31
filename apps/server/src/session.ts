@@ -107,13 +107,36 @@ export class Session {
   }
   private subs = new Set<(seq: number) => void>();
 
+  /**
+   * M31：瞬时事件广播（queued 等「不属于任何一次运行」的状态信号）。
+   * 与 recordEvent/subscribe 对称的第二个通道：不进回放缓冲、无 seq——
+   * 旧定案「queued 不进回放缓冲」保持不变，live 观察者缺的是这一类的广播机制，
+   * 而不是把瞬时事件塞进回放序列。
+   */
+  emitTransient(ev: unknown): void {
+    for (const fn of this.transientSubs) { try { fn(ev); } catch { /* 单个订阅者故障不拖垮广播 */ } }
+  }
+  subscribeTransient(fn: (ev: unknown) => void): () => void {
+    this.transientSubs.add(fn);
+    return () => { this.transientSubs.delete(fn); };
+  }
+  private transientSubs = new Set<(ev: unknown) => void>();
+
   /** 每条消息运行开始时清空（缓冲只覆盖"当前这一跑"，历史由 messages 端点负责） */
   resetEventBuffer(): void {
     this.events = [];
     this.seq = 0;
   }
 
+  /** 等待执行的消息数（waiters 含正在执行者；与审批 Map 的 pending 无关）——live 挂住条件与排队可见性的状态源 */
+  get pendingTurns(): number { return Math.max(0, this.waiters - (this.busy ? 1 : 0)); }
+
   eventsSince(since: number): BufferedEvent[] {
+    // M31 跨轮游标：缓冲每轮重置、seq 从 1 重计——since 落在当前 seq 之后只可能是
+    // 上一轮的陈旧游标（同轮内 seq 单调，不可能超过）。按客户端意图（「给我这之后
+    // 的一切」）返回当前轮全量；缓冲为空时自然返回 []。同时修好轮询回退断线跨轮
+    // 补帧拿空的同款问题。
+    if (since > this.seq) return this.events;
     return this.events.filter(e => e.seq > since);
   }
 

@@ -5,8 +5,10 @@
  *   S1 多观察者扇出：20 个 live 观察者（错峰 since）是否全员收齐、finish 到达离散度多大
  *   S2 断线恢复（代理掐线模拟）：忙中途 abort 部分观察者——幸存者是否受影响、
  *      断线者带 since=lastSeq 重连是否「无缺无重」恰好衔接
- *   S3 排队协同：并发上限默认 3，5 会话齐发——queued（写者流专属瞬时事件，不进回放缓冲）
- *      是否可见、观察者在各自运行开始后挂载是否收齐；空闲会话 live「补完即关」形态确认
+ *   S3 排队协同：并发上限默认 3，5 会话齐发——queued 在写者流与 live（M31 瞬时广播）均可见；
+ *      观察者在各自运行开始后挂载是否收齐；空闲会话 live「补完即关」形态确认
+ *   S5 多轮单连接（M31）：同会话连发两条——一条 live 连接看完整场：第一轮全帧 →
+ *      queued 瞬时帧（无 id）→ 第二轮（seq 从 1 重计，跨轮游标）→ 排空收流
  *   S4 keepalive 实测：轮次间静默窗 >15s 时观察者是否真的收到 ping 注释帧（防代理空闲掐线的实证）
  *
  * 前置：npm run build（压测对象为 dist 构建产物，与 e2e/smoke 同约定）
@@ -36,9 +38,10 @@ async function jfetch<T>(url: string, init?: RequestInit): Promise<{ status: num
   return { status: r.status, body: await r.json().catch(() => ({})) as T };
 }
 
-/** live 观察者：GET /stream 的可断线客户端。记录每帧到达时刻（延迟测量的基础）。 */
+/** live 观察者：GET /stream 的可断线客户端。记录每帧到达时刻（延迟测量的基础）。
+ *  M31 起瞬时事件（queued）无 id 帧——seq 记为 null，不参与 lastSeq 游标语义。 */
 class Live {
-  readonly frames: Array<{ seq: number; type: string; t: number }> = [];
+  readonly frames: Array<{ seq: number | null; type: string; t: number }> = [];
   pings = 0;
   /** 挂载时刻（构造瞬间，用于首帧延迟测量——在循环外统一记录会得到负数） */
   attachAt = 0;
@@ -62,16 +65,16 @@ class Live {
           if (/^event: ping$/m.test(frame)) { this.pings++; continue; }
           const idLine = frame.split('\n').find(l => l.startsWith('id:'));
           const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
-          if (!data || !idLine) continue;
+          if (!data) continue;
           try {
             const ev = JSON.parse(data) as { type: string };
-            this.frames.push({ seq: Number(idLine.slice(3).trim()), type: ev.type, t: now() });
+            this.frames.push({ seq: idLine ? Number(idLine.slice(3).trim()) : null, type: ev.type, t: now() });
           } catch { /* 坏帧跳过 */ }
         }
       }
     })().catch(() => { /* abort/断线：观察者侧正常收尾 */ });
   }
-  get lastSeq(): number { return this.frames.at(-1)?.seq ?? 0; }
+  get lastSeq(): number { return this.frames.filter(f => f.seq !== null).at(-1)?.seq ?? 0; }
   get sawFinish(): boolean { return this.frames.some(f => f.type === 'finish'); }
   abort(): void { this.ctrl.abort(); }
   /** 等待流自然结束（非 busy 补完即关 / busy 到 finish 后服务端收尾） */
@@ -203,10 +206,8 @@ async function main(): Promise<void> {
     ok(resumeExact, `断线者 since=lastSeq 重连补帧恰好衔接（首个 seq = lastSeq+1，终值 ${writer2Events.length}）`);
 
     // ---- S3：排队协同——5 会话齐发（默认并发上限 3 → 2 排队）× 各 2 观察者 ----
-    // 语义注意（首版期望写错后深挖确认，见 PR）：queued 是写者流专属的瞬时状态事件
-    // （不进回放缓冲——server index.ts 明注），且排队期 session 不 busy，live 按
-    // 「非 busy 补完即关」立即关流。因此观察者在**各自会话运行开始后**挂载；
-    // queued 的可见性断言放在写者流上。
+    // M31 起 queued 瞬时帧也广播给 live 观察者（见 S5）；本节仍验证写者流可见性与
+    // 运行开始后挂载的收齐行为（挂载窗口语义不变：等该会话运行开始再挂）。
     section('S3 排队协同（5 会话齐发 × 各 2 观察者，上限默认 3）');
     const s3 = await Promise.all(Array.from({ length: 5 }, () => newSession(srv.base)));
     const writers3 = s3.map(id => postToFinish(srv.base, id, '看看有什么文件'));
@@ -224,10 +225,30 @@ async function main(): Promise<void> {
       '10 观察者各自收齐所属会话全帧（排队会话在运行开始后挂载）');
     const queuedOnWriter = writers3Events.filter(ev => ev.some(e => e.type === 'queued')).length;
     ok(queuedOnWriter >= 2, `排队事件在写者流可见（含 queued 帧的写者流 ${queuedOnWriter} 个，≥ 排队会话数 2）`);
-    // 附带观察：空闲会话挂 live → 「非 busy 补完即关」的观察者侧形态（0 帧即关）
+    // 附带观察：空闲会话挂 live → 「非 busy 且无排队：补完即关」的观察者侧形态（0 帧即关）
     const idle = await newSession(srv.base);
     const idleObs = new Live(srv.base, idle, 0);
     ok(await idleObs.waitEnd(3000) && idleObs.frames.length === 0, '空闲会话 live 补完即关（0 帧，观察者侧语义确认）');
+
+    // ---- S5（M31）：多轮单连接观察——同会话连发两条，一条 live 连接看完整场 ----
+    section('S5 多轮单连接观察（M31：排队衔接 + 瞬时帧 + 跨轮游标）');
+    const sid5 = await newSession(srv.base);
+    const writer5a = postToFinish(srv.base, sid5, '看看有什么文件');
+    if (!await waitBuffered(srv.base, sid5, 1, 5000)) throw new Error('S5：首轮未开始');
+    const obs5 = new Live(srv.base, sid5, 0); // 第一轮进行中挂载
+    const writer5b = postToFinish(srv.base, sid5, '再看看'); // 排在第一条后面
+    const [evA, evB] = await Promise.all([writer5a, writer5b]);
+    await obs5.waitEnd(8000); // 队列排空（第二条 finish 写完且 pending=0）才收流
+    const finishes = obs5.frames.filter(f => f.type === 'finish');
+    ok(finishes.length === 2, '单连接观察到两次 finish（多轮 hold 语义）');
+    const transient = obs5.frames.filter(f => f.seq === null);
+    ok(transient.some(f => f.type === 'queued'), `排队瞬时帧（无 id）到达观察者（${transient.length} 帧）`);
+    // 跨轮游标：第一轮 seq 1..N，第二轮 seq 重新从 1 计（陈旧游标回退为当前轮全量）
+    const seqs = obs5.frames.filter(f => f.seq !== null).map(f => f.seq as number);
+    const firstRunLen = evA.filter(e => e.type !== 'queued').length;
+    ok(seqs.slice(0, firstRunLen).every((v, i) => v === i + 1) && seqs[firstRunLen] === 1,
+      `跨轮游标：第一轮 seq 1..${firstRunLen}，第二轮从 1 重计（观察者无缺帧）`);
+    ok(obs5.lastSeq === evB.filter(e => e.type !== 'queued').length, `最终游标 = 第二轮帧数（${evB.filter(e => e.type !== 'queued').length}）`);
   } finally {
     await srv.stop();
   }

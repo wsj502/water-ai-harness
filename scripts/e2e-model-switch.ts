@@ -681,6 +681,54 @@ async function main(): Promise<void> {
       ok(histC.body.messages.length >= 2, 'M29 宽限协同：运行完整入史');
     }
 
+    // ---- 20. live 排队可见性（M31：瞬时帧广播 + 多轮 hold + 跨轮游标）----
+    {
+      // 读整条流直到 EOF（不在 finish 处提前返回——多轮观察要跨过两次 finish）
+      const readAll = async (url: string): Promise<Array<{ id: string | null; ev: Record<string, unknown> }>> => {
+        const resp = await fetch(url);
+        if (!resp.ok || !resp.body) throw new Error(`SSE HTTP ${resp.status}`);
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        const out: Array<{ id: string | null; ev: Record<string, unknown> }> = [];
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf('\n\n')) >= 0) {
+            const frame = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            const idLine = frame.split('\n').find(l => l.startsWith('id:'));
+            const data = frame.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).replace(/^ /, '')).join('\n');
+            if (!data) continue;
+            try { out.push({ id: idLine ? idLine.slice(3).trim() : null, ev: JSON.parse(data) as Record<string, unknown> }); } catch { /* 跳过坏帧 */ }
+          }
+        }
+        return out;
+      };
+      const sidQ = await mkSession();
+      const run1 = readSSE(`${BASE}/api/sessions/${sidQ}/messages`, post(sidQ));
+      for (let i = 0; i < 50; i++) { // 等首轮确立 busy（消除与入队的竞态）
+        const st = await jfetch<{ busy: boolean }>(`${BASE}/api/sessions/${sidQ}/events?since=0`);
+        if (st.body.busy) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      const liveQ = readAll(`${BASE}/api/sessions/${sidQ}/stream?since=0`);
+      const run2 = readSSE(`${BASE}/api/sessions/${sidQ}/messages`, post(sidQ)); // 排在第一条后
+      await run1; await run2;
+      const framesQ = await liveQ;
+      ok(framesQ.filter(f => f.ev.type === 'finish').length === 2, 'M31 多轮 hold：单连接观察到两次 finish（队列排空才收流）');
+      ok(framesQ.some(f => f.ev.type === 'queued' && f.id === null), 'M31 排队瞬时帧到达 live（无 seq id，不入回放缓冲）');
+      const seqsQ = framesQ.filter(f => f.id !== null).map(f => Number(f.id));
+      const resetQ = seqsQ.findIndex((v, i) => i > 0 && v === 1);
+      ok(resetQ > 0, 'M31 跨轮游标：第二轮 seq 从 1 重计（观察者经陈旧游标回退收齐当前轮）');
+      // 排空后用「上一轮的陈旧游标」查 /events：应得当前轮（第二轮）全量而非空
+      const staleQ = await jfetch<{ events: unknown[] }>(`${BASE}/api/sessions/${sidQ}/events?since=${seqsQ[resetQ - 1]! + 50}`);
+      ok(staleQ.body.events.length === seqsQ.length - resetQ,
+        `M31 /events 跨轮陈旧游标 → 当前轮全量（${staleQ.body.events.length} 帧，非空）`);
+    }
+
     // ---- 17. BYOK：Web 端安全录入 API Key（#67：收 key 不收 baseUrl）----
     // 主 server 是 mock（hasKey 恒真，测不出动态性）——起第二个「无凭据非 mock」server：
     // 验证无 key 也能启动（BYOK 留口）+ hasKey 动态翻转 + 任何响应永不回显完整 key 值
