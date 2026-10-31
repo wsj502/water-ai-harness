@@ -43,6 +43,13 @@ export default function App() {
   const [pendingWs, setPendingWs] = useState('default');
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /**
+   * #73 流归属代际：每次切换/新建会话 +1——旧会话的事件泵（SSE handle /
+   * busy 接流轮询 / 断线补帧循环）在每轮检查代际，过期即退出，
+   * 防止旧流事件继续渲染进新会话视图（跨会话流污染）。
+   * 本地作废不违背 M19 宽限语义：服务端运行照常受保护，回到原会话由 busy 回放接上。
+   */
+  const streamGen = useRef(0);
 
   const refreshSessions = useCallback((archived: boolean) => {
     return api.listSessions(archived).then(setSessions).catch(() => {});
@@ -74,6 +81,8 @@ export default function App() {
 
   const openSession = useCallback(async (id: string) => {
     setView('chat'); // #71：任何页面点会话（最近/归档列表/任务跳转）都切回会话视图展示
+    const gen = ++streamGen.current; // #73：作废旧会话的事件泵（接流轮询/补帧循环见代际检查）
+    abortRef.current?.abort();       // 断开旧 SSE（服务端宽限期照常保护运行）
     setActiveId(id);
     setError(null);
     setUsage(null);
@@ -97,6 +106,7 @@ export default function App() {
             let delay = 250;
             for (;;) {
               const { events, busy: still } = await api.eventsSince(id, cursor);
+              if (gen !== streamGen.current) return; // #73：已切走，停止灌旧会话事件
               for (const e of events) {
                 if (e.ev.type === 'usage') setUsage({ input: e.ev.inputTokens, output: e.ev.outputTokens });
                 setBlocks(bs => applyEvent(bs, e.ev));
@@ -108,7 +118,7 @@ export default function App() {
               delay = events.length > 0 ? 250 : Math.min(delay * 2, 1200);
             }
           } catch { /* 接流失败则保持历史视图 */ }
-          finally { setBusy(false); }
+          finally { if (gen === streamGen.current) setBusy(false); } // #73：旧泵不清新会话的 busy
           api.listSessions().then(setSessions).catch(() => {});
         })();
       } else {
@@ -146,6 +156,7 @@ export default function App() {
       };
 
       // 断线补帧（M3）：流异常断开（非用户中断）→ 轮询 events 端点直到 finish
+      const sendGen = streamGen.current; // #73：补帧循环的归属代际（切会话即作废）
       let lastSeq = 0;
       try {
         await api.streamMessage(sid, text, (ev, id) => {
@@ -159,6 +170,7 @@ export default function App() {
         let delay = 250;
         for (;;) {
           if (Date.now() > deadline) throw new Error('断线补帧超时（10 分钟）');
+          if (sendGen !== streamGen.current) return; // #73：已切会话，旧补帧停止（finally 由新会话接管）
           const { events } = await api.eventsSince(sid, lastSeq).catch(() => ({ events: [], busy: false }));
           for (const e of events) {
             if (e.seq > lastSeq) lastSeq = e.seq;
@@ -180,6 +192,7 @@ export default function App() {
 
   const newSession = useCallback(() => {
     abortRef.current?.abort();
+    streamGen.current++; // #73：新建也作废所有事件泵
     setActiveId(null);
     setBlocks([]);
     setUsage(null);
