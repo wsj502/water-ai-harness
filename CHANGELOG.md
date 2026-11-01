@@ -9,12 +9,23 @@
 
 ## [Unreleased]
 
-### 修复（dogfooding 用量观察两发现，2026-11-01）
+## [0.11.1] - 2026-11-01
 
-- **会话 token 累计不持久化（#96）**：sessions 表补 `tokens_in/tokens_out` 列（老库自动迁移），saveSession/loadAll/恢复链路全通——侧栏 token 数不再随重启归零；vitest 105→107（持久化往返 + 老库迁移）
-- **容器缺 demo MCP server（#97）**：Dockerfile 补 `COPY scripts/demo-mcp-server.mjs`——挂载配置引用的 server 此前在容器内永远起不来（Cannot find module）；mcp-bridge 的 per-server 降级本就正确，仅缺文件
+v0.11.1 主题：**dogfooding 三修复**。全部来自 v0.11.0 生产容器的只读用量观察与一次性容器验证——其中 #99 是验证环节预演出的「不修则 v0.11.1 部署即崩」级事故。
 
-### 用量观察结论（v0.11.0 生产容器，2026-11-01）
+### 修复
+
+- **会话 token 累计不持久化（#96）**：sessions 表补 `tokens_in/tokens_out` 列（老库自动迁移），saveSession/loadAll/恢复链路全通——侧栏 token 数不再随重启归零；vitest 105→**107**（持久化往返 + 老库迁移）
+- **容器缺 demo MCP server（#97）**：Dockerfile 补 `COPY scripts/demo-mcp-server.mjs`——挂载配置引用的 server 此前在容器内永远起不来；mcp-bridge 的 per-server 降级本就正确，仅缺文件
+- **compose 配置与数据分离（#99）**：DB 此前落在 `.water` 整目录只读挂载里——消息保存**静默失败**（try/catch 吞成日志），#96 的 schema 迁移更会**启动即崩**（一次性验证容器预演确认）。改为 `water-data` 命名卷承载 DB（可写、跨重建存活）+ `mcp.json` 单文件 ro 挂载保留配置保护意图
+- 附带：补齐 v0.11.0 发版时 tauri build 再生但未入库的 `Cargo.lock`（消除与 Cargo.toml 版本漂移）
+
+### 行为变更（部署侧，如实）
+
+- 生产容器换新卷后**从空库开始**：旧会话视图消失（数据仍在宿主 `.water/sessions.db`，未删除）；此前容器侧本就从未成功写库（只读挂载），宿主库是 host dev server 写的
+- 容器会话数据**首次真正可写且持久**（跨重建存活）
+
+### 用量观察结论（v0.11.0 生产容器，2026-11-01，v0.12 决策依据）
 
 - 9 会话 / 11 任务 / 工具调用 9 次：`glob=7 echo=1 mcp__demo__mcp_echo=1`，**子代理（task）0 次**——「并发子代理限流」候选按数据关闭（继续等真实用量）
 - HTTP 型配置工具 0 次使用——重试/缓存候选同样缺乏使用驱动
