@@ -19,7 +19,14 @@ services:
     volumes:
       # Agent 的工作区：把宿主机项目目录挂进去
       - ${WATER_WORKSPACE:-./workspace}:/workspace
-      # 插件配置（mcp.json 等），容器内只读
-      - ./.water:/workspace/.water:ro
+      # #99 配置与数据分离：DB 落在命名卷（可写、跨重建存活）；
+      # 此前整目录 ro 挂载把 sessions.db 也变只读——保存静默失败，schema 迁移启动即崩
+      - water-data:/workspace/.water
+      # 插件配置：单文件只读（更具体路径覆盖上面的卷；mcp.json 在仓库跟踪中）
+      # 注意：bind 单文件要求源必须存在，缺失时 docker 会创建同名目录导致挂载异常
+      - ./.water/mcp.json:/workspace/.water/mcp.json:ro
     restart: unless-stopped
     read_only: false # /workspace 需要写权限（Agent 改代码），镜像层本身无可写需求
+
+volumes:
+  water-data:
