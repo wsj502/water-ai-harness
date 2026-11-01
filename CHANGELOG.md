@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### 修复（#97 部署形态补全）
+
+- **demo MCP 脚本被 workspace 挂载遮蔽**：镜像层 `COPY` 到 `/workspace/scripts/` 的内容会被 `./workspace:/workspace` 挂载整体遮蔽（Docker 挂载点覆盖镜像层——一次性容器没挂 workspace 所以验证通过，生产一挂就现形）。修法：compose 单文件挂载 `./scripts/demo-mcp-server.mjs:/workspace/scripts/demo-mcp-server.mjs:ro`（更具体路径胜出）；生产实测 `MCP server "demo" 接入`
+
 ## [0.11.1] - 2026-11-01
 
 v0.11.1 主题：**dogfooding 三修复**。全部来自 v0.11.0 生产容器的只读用量观察与一次性容器验证——其中 #99 是验证环节预演出的「不修则 v0.11.1 部署即崩」级事故。
