@@ -9,6 +9,16 @@
 
 ## [Unreleased]
 
+### 修复（dogfooding 用量观察两发现，2026-11-01）
+
+- **会话 token 累计不持久化（#96）**：sessions 表补 `tokens_in/tokens_out` 列（老库自动迁移），saveSession/loadAll/恢复链路全通——侧栏 token 数不再随重启归零；vitest 105→107（持久化往返 + 老库迁移）
+- **容器缺 demo MCP server（#97）**：Dockerfile 补 `COPY scripts/demo-mcp-server.mjs`——挂载配置引用的 server 此前在容器内永远起不来（Cannot find module）；mcp-bridge 的 per-server 降级本就正确，仅缺文件
+
+### 用量观察结论（v0.11.0 生产容器，2026-11-01）
+
+- 9 会话 / 11 任务 / 工具调用 9 次：`glob=7 echo=1 mcp__demo__mcp_echo=1`，**子代理（task）0 次**——「并发子代理限流」候选按数据关闭（继续等真实用量）
+- HTTP 型配置工具 0 次使用——重试/缓存候选同样缺乏使用驱动
+
 ## [0.11.0] - 2026-11-01
 
 v0.11.0 主题：**live 排队可见性**。#91 压测实测发现「live 观察者永远看不到排队状态」（queued 只到写者流 + 非 busy 即关），M31 收口这个协议缺口：live 从「观察一次运行」进化为「观察整场会话」。

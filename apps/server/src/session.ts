@@ -195,6 +195,8 @@ export class SessionStore {
       s.model = r.model ?? null;
       s.archived = Boolean(r.archived);
       s.workspaceId = r.workspaceId ?? null;
+      s.tokensIn = r.tokensIn ?? 0; // #96：token 累计随会话恢复
+      s.tokensOut = r.tokensOut ?? 0;
       this.sessions.set(r.id, s);
     }
     // 恢复任务记录（running 态只存在于内存；若落库盘里出现，说明上次进程被杀 → 记为中断）
@@ -249,6 +251,7 @@ export class SessionStore {
       this.persistence?.saveSession(s.id, s.title, s.createdAt, s.messages, {
         protocol: s.protocol, model: s.model, archived: s.archived,
         workspaceId: s.workspaceId,
+        tokensIn: s.tokensIn, tokensOut: s.tokensOut, // #96：token 累计入持久层
       });
     } catch (e) {
       console.error(`[persistence] 会话 ${s.id} 落库失败:`, e instanceof Error ? e.message : e);
