@@ -10,7 +10,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { WMessage } from '@water/core';
 
-interface SessionRow { id: string; title: string; created_at: number; protocol?: string | null; model?: string | null; archived?: number | null; workspace_id?: string | null }
+interface SessionRow { id: string; title: string; created_at: number; protocol?: string | null; model?: string | null; archived?: number | null; workspace_id?: string | null; tokens_in?: number | null; tokens_out?: number | null }
 interface MessageRow { session_id: string; seq: number; role: string; parts: string }
 export interface TaskRow {
   id: string; session_id: string; title: string;
@@ -57,6 +57,9 @@ export class SessionPersistence {
     this.addColumnIfMissing('sessions', 'archived', 'INTEGER');
     // M7B 迁移：工作区绑定
     this.addColumnIfMissing('sessions', 'workspace_id', 'TEXT');
+    // #96 迁移：会话 token 累计（此前只存内存，重启归零）
+    this.addColumnIfMissing('sessions', 'tokens_in', 'INTEGER NOT NULL DEFAULT 0');
+    this.addColumnIfMissing('sessions', 'tokens_out', 'INTEGER NOT NULL DEFAULT 0');
   }
 
   private addColumnIfMissing(table: string, column: string, ddl: string): void {
@@ -66,9 +69,9 @@ export class SessionPersistence {
     }
   }
 
-  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[]; protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null }[] {
+  loadAll(): { id: string; title: string; createdAt: number; messages: WMessage[]; protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null; tokensIn?: number; tokensOut?: number }[] {
     const sessions = this.db
-      .prepare('SELECT id, title, created_at, protocol, model, archived, workspace_id FROM sessions ORDER BY created_at DESC')
+      .prepare('SELECT id, title, created_at, protocol, model, archived, workspace_id, tokens_in, tokens_out FROM sessions ORDER BY created_at DESC')
       .all() as unknown as SessionRow[];
     const msgStmt = this.db.prepare(
       'SELECT role, parts FROM messages WHERE session_id = ? ORDER BY seq',
@@ -84,6 +87,7 @@ export class SessionPersistence {
         protocol: s.protocol ?? null, model: s.model ?? null,
         archived: Boolean(s.archived),
         workspaceId: s.workspace_id ?? null,
+        tokensIn: s.tokens_in ?? 0, tokensOut: s.tokens_out ?? 0, // #96：重启不再归零
       };
     });
   }
@@ -91,14 +95,14 @@ export class SessionPersistence {
   /** 整存整取：删旧插新（事务保证原子性） */
   saveSession(
     id: string, title: string, createdAt: number, messages: WMessage[],
-    config?: { protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null },
+    config?: { protocol?: string | null; model?: string | null; archived?: boolean; workspaceId?: string | null; tokensIn?: number; tokensOut?: number },
   ): void {
     this.db.exec('BEGIN');
     try {
       this.db.prepare(
-        'INSERT INTO sessions (id, title, created_at, protocol, model, archived, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
-        'ON CONFLICT(id) DO UPDATE SET title = excluded.title, protocol = excluded.protocol, model = excluded.model, archived = excluded.archived, workspace_id = excluded.workspace_id',
-      ).run(id, title, createdAt, config?.protocol ?? null, config?.model ?? null, config?.archived ? 1 : 0, config?.workspaceId ?? null);
+        'INSERT INTO sessions (id, title, created_at, protocol, model, archived, workspace_id, tokens_in, tokens_out) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(id) DO UPDATE SET title = excluded.title, protocol = excluded.protocol, model = excluded.model, archived = excluded.archived, workspace_id = excluded.workspace_id, tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out',
+      ).run(id, title, createdAt, config?.protocol ?? null, config?.model ?? null, config?.archived ? 1 : 0, config?.workspaceId ?? null, config?.tokensIn ?? 0, config?.tokensOut ?? 0);
       this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id);
       const ins = this.db.prepare(
         'INSERT INTO messages (session_id, seq, role, parts) VALUES (?, ?, ?, ?)',

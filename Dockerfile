@@ -1,7 +1,7 @@
 # ============================================================
 # Water 一体化镜像：core + server + web 构建产物 + 插件
-# 构建:  docker build -t water:0.7.0 .
-# 运行:  docker run -p 3210:3210 -e ZHIPU_API_KEY=xxx water:0.7.0
+# 构建:  docker compose up -d --build（tag 随 docker-compose.yml）
+# 运行:  docker run -p 3210:3210 -e ZHIPU_API_KEY=xxx water:<tag>
 #        （离线体验：-e WATER_MOCK=1，零凭据）
 # ============================================================
 
@@ -45,6 +45,9 @@ COPY plugins plugins
 # 工作区：Agent 读写的目录，用 volume 挂载真实项目
 RUN mkdir -p /workspace
 WORKDIR /workspace
+# #97：demo MCP server 进镜像——挂载进来的 .water/mcp.json 以工作区相对路径引用它，
+# 不带的话该 server 在容器里永远起不来（Cannot find module）
+COPY scripts/demo-mcp-server.mjs scripts/
 ENV WATER_WEB_DIST=/app/apps/web/dist \
     WATER_PLUGIN_DIRS=/app/plugins \
     WATER_PORT=3210
