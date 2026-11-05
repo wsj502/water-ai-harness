@@ -73,6 +73,44 @@ describe('Agent Loop 离线闭环', () => {
     const toolMsg = messages.findLast(m => m.role === 'tool');
     expect(toolMsg?.parts[0]).toMatchObject({ type: 'tool_result', isError: true });
   });
+
+  it('#108 审批等待期间 tool_pending 已实时发射（串行路径不再堵在审批后面）', async () => {
+    const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '跑命令' }] }];
+    // 手动闸门：approve 挂起，直到测试侧放行——模拟用户还没点批准卡
+    let releaseApprove!: (d: 'once' | 'session' | 'deny') => void;
+    const gate = new Promise<'once'>(r => { releaseApprove = r; });
+    const seenBeforeRelease: LoopEvent[] = [];
+
+    const iter = agentLoop({
+      provider: new MockShellProvider(), model: 'mock', system: 'SYS', messages,
+      tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+      toolCtx: { cwd: process.cwd() }, maxTurns: 5,
+      approve: () => gate,
+    });
+    // 审批未 resolve 期间消费事件：tool_pending 必须已经到达（前端建块/审批卡渲染的依据）。
+    // 超时保护：bug 在场时迭代器会卡在审批 await 上——用竞争让它 3s 内失败而非挂死
+    const nextWithTimeout = () => Promise.race([
+      iter.next(),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('tool_pending 未在审批等待期间到达（#108 复现）')), 3000)),
+    ]);
+    for (let i = 0; i < 10; i++) {
+      const r = await nextWithTimeout();
+      if (r.done) break;
+      seenBeforeRelease.push(r.value);
+      if (r.value.type === 'tool_pending') break;
+    }
+    expect(seenBeforeRelease.some(e => e.type === 'tool_pending')).toBe(true);
+    releaseApprove('once'); // 用户点了批准
+    for (;;) {
+      const r = await iter.next();
+      if (r.done) break;
+      seenBeforeRelease.push(r.value);
+    }
+    // 批准后完整收尾：approved → result → 下一轮 → finish(end)
+    expect(seenBeforeRelease.some(e => e.type === 'tool_approved')).toBe(true);
+    expect(seenBeforeRelease.some(e => e.type === 'tool_result' && !e.isError)).toBe(true);
+    expect(seenBeforeRelease.at(-1)).toMatchObject({ type: 'finish', reason: 'end' });
+  });
 });
 
 /** 一上来就请求 shell 的 mock */
