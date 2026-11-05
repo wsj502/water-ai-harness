@@ -596,6 +596,9 @@ app.post('/api/sessions/:id/messages', async c => {
     : rt.contextWindow ? Math.floor(rt.contextWindow * 0.8)
     : undefined;
   const compactSummarize = !mock && process.env.WATER_COMPACT_SUMMARY !== '0';
+  // #108：输出预算可配——超长 thinking + 大成品（如整页 HTML）可能耗尽默认 8192
+  // 触发端点断流（#106 现场疑似诱因）；生产建议 WATER_MAX_TOKENS=16384+
+  const maxTokens = Number(process.env.WATER_MAX_TOKENS) || undefined;
 
   // M14 消息排队：深度上限 5（含执行中），超出 429；排队请求先收 queued 事件再等待闸门
   if (s.waiters >= 5) {
@@ -694,6 +697,7 @@ app.post('/api/sessions/:id/messages', async c => {
         provider: rt.provider, model: rt.model, system: wsSystem, messages: s.messages,
         ...(budget !== undefined ? { maxContextTokens: budget } : {}),
         ...(compactSummarize ? { compactSummarize: true } : {}),
+        ...(maxTokens !== undefined ? { maxTokens } : {}),
         tools: allTools, permissions: s.permissions, hooks: plugins.hooks,
         toolCtx: { cwd: ws.path }, approve,
         maxTurns: 20, signal: ac.signal,

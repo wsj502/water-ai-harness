@@ -365,11 +365,22 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
     const parallel = toolCalls.length > 1 && process.env.WATER_PARALLEL_TOOLS !== '0';
 
     if (!parallel) {
-      // 串行路径：顺序执行顺序发射（与历史行为一致）
+      // #108：串行路径同样实时排水——原实现把 runOne 的全部事件缓到执行完才发射，
+      // 而审批等待就发生在 runOne 内部 → tool_pending 被堵在审批后面 → 前端拿到
+      // approval_required 时没有工具块可挂，审批卡永远渲染不出来（实时流与回放同病）。
+      // 与 M27 并发泵同构，顺序语义不变：仍一次只执行一个工具，事件即时发射。
       for (const call of toolCalls) {
-        const serial: LoopEvent[] = [];
-        await runOne(call, ev => { serial.push(ev); });
-        for (const ev of serial) yield ev;
+        const q: LoopEvent[] = [];
+        let wake: (() => void) | null = null;
+        let settled = false;
+        const runP = Promise.resolve()
+          .then(() => runOne(call, ev => { q.push(ev); wake?.(); }))
+          .finally(() => { settled = true; wake?.(); });
+        while (!settled || q.length > 0) {
+          while (q.length > 0) yield q.shift()!;
+          if (!settled) await new Promise<void>(r => { wake = r; });
+        }
+        await runP;
       }
     } else {
       // M27 并发泵：与 M12 子代理泵同构——任务把事件 push 进队列，主循环实时排水 yield
