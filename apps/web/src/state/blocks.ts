@@ -108,6 +108,16 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
       });
       break;
     }
+    case 'finish': {
+      // #106：运行的结局必须在聊天区可见——错误/中断/上限此前零呈现（刷新回放同样要能看到）
+      const f = ev as { reason?: string; message?: string };
+      const text = f.reason === 'error'
+        ? `❌ 运行中断${f.message ? `：${f.message}` : ''}——可直接重发`
+        : f.reason === 'max_turns' ? '⚠️ 已达单次运行轮次上限（20 轮）——可继续发消息让它接着做'
+        : f.reason === 'aborted' ? '⏹ 运行已中断（连接断开超过宽限期）' : null;
+      if (text) next.push({ kind: 'notice', text, ts: Date.now() });
+      break;
+    }
     case 'sub_event': {
       // M18：子代理事件折叠为时间线（轮次分组 + 按序节点）。
       // 文本节点相邻累积；工具节点 pending→result/denied 收拢状态；

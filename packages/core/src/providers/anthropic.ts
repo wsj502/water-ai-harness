@@ -106,63 +106,72 @@ export class AnthropicProvider implements Provider {
     let inputTokens = 0, outputTokens = 0;
     let stopReason: string = 'unknown';
 
-    for await (const ev of parseSSE(resp.body)) {
-      let j: Record<string, unknown>;
-      try { j = JSON.parse(ev.data); } catch { continue; }
+    // #106：传输异常（连接中断/读流出错）不允许穿透——异常会绕过 loop 的 error 事件
+    // 收敛路径，造成「回放缓冲无结尾帧 + 零日志 + UI 零呈现」的全链路静默死亡。
+    // 转为 error 事件后由 loop 统一收敛为 finish(reason=error, message)。
+    try {
+      for await (const ev of parseSSE(resp.body)) {
+        let j: Record<string, unknown>;
+        try { j = JSON.parse(ev.data); } catch { continue; }
 
-      switch (ev.event) {
-        case 'message_start': {
-          const usage = (j.message as Record<string, unknown>)?.usage as Record<string, number> | undefined;
-          if (usage?.input_tokens) inputTokens = usage.input_tokens;
-          break;
-        }
-        case 'content_block_start': {
-          const i = j.index as number;
-          const cb = j.content_block as Record<string, unknown>;
-          if (cb.type === 'tool_use') {
-            blocks.set(i, { type: 'tool_use', id: cb.id as string, name: cb.name as string, jsonBuf: '' });
-          } else if (cb.type === 'thinking') {
-            blocks.set(i, { type: 'thinking', jsonBuf: '' });
-          } else {
-            blocks.set(i, { type: 'text', jsonBuf: '' });
+        switch (ev.event) {
+          case 'message_start': {
+            const usage = (j.message as Record<string, unknown>)?.usage as Record<string, number> | undefined;
+            if (usage?.input_tokens) inputTokens = usage.input_tokens;
+            break;
           }
-          break;
-        }
-        case 'content_block_delta': {
-          const i = j.index as number;
-          const delta = j.delta as Record<string, unknown>;
-          const st = blocks.get(i);
-          if (!st) break;
-          if (delta.type === 'text_delta') yield { type: 'text_delta', text: delta.text as string };
-          else if (delta.type === 'thinking_delta') yield { type: 'thinking_delta', text: delta.thinking as string };
-          else if (delta.type === 'input_json_delta') st.jsonBuf += delta.partial_json as string;
-          break;
-        }
-        case 'content_block_stop': {
-          const i = j.index as number;
-          const st = blocks.get(i);
-          if (st?.type === 'tool_use') {
-            let input: Record<string, unknown> = {};
-            try { input = JSON.parse(st.jsonBuf || '{}'); } catch { /* 容错：非法 JSON 按空调用 */ }
-            yield { type: 'tool_use', call: { type: 'tool_use', id: st.id!, name: st.name!, input } };
+          case 'content_block_start': {
+            const i = j.index as number;
+            const cb = j.content_block as Record<string, unknown>;
+            if (cb.type === 'tool_use') {
+              blocks.set(i, { type: 'tool_use', id: cb.id as string, name: cb.name as string, jsonBuf: '' });
+            } else if (cb.type === 'thinking') {
+              blocks.set(i, { type: 'thinking', jsonBuf: '' });
+            } else {
+              blocks.set(i, { type: 'text', jsonBuf: '' });
+            }
+            break;
           }
-          blocks.delete(i);
-          break;
+          case 'content_block_delta': {
+            const i = j.index as number;
+            const delta = j.delta as Record<string, unknown>;
+            const st = blocks.get(i);
+            if (!st) break;
+            if (delta.type === 'text_delta') yield { type: 'text_delta', text: delta.text as string };
+            else if (delta.type === 'thinking_delta') yield { type: 'thinking_delta', text: delta.thinking as string };
+            else if (delta.type === 'input_json_delta') st.jsonBuf += delta.partial_json as string;
+            break;
+          }
+          case 'content_block_stop': {
+            const i = j.index as number;
+            const st = blocks.get(i);
+            if (st?.type === 'tool_use') {
+              let input: Record<string, unknown> = {};
+              try { input = JSON.parse(st.jsonBuf || '{}'); } catch { /* 容错：非法 JSON 按空调用 */ }
+              yield { type: 'tool_use', call: { type: 'tool_use', id: st.id!, name: st.name!, input } };
+            }
+            blocks.delete(i);
+            break;
+          }
+          case 'message_delta': {
+            const d = j.delta as Record<string, unknown> | undefined;
+            if (d?.stop_reason) stopReason = d.stop_reason as string;
+            const usage = j.usage as Record<string, number> | undefined;
+            if (usage?.output_tokens) outputTokens = usage.output_tokens;
+            // 智谱端点在 message_start 里报 0，真实值在 message_delta（与官方行为不同，实测确认）
+            if (usage?.input_tokens) inputTokens = usage.input_tokens;
+            break;
+          }
+          case 'message_stop': break;
+          case 'error':
+            yield { type: 'error', error: new Error(`stream error: ${ev.data.slice(0, 300)}`) };
+            return;
         }
-        case 'message_delta': {
-          const d = j.delta as Record<string, unknown> | undefined;
-          if (d?.stop_reason) stopReason = d.stop_reason as string;
-          const usage = j.usage as Record<string, number> | undefined;
-          if (usage?.output_tokens) outputTokens = usage.output_tokens;
-          // 智谱端点在 message_start 里报 0，真实值在 message_delta（与官方行为不同，实测确认）
-          if (usage?.input_tokens) inputTokens = usage.input_tokens;
-          break;
-        }
-        case 'message_stop': break;
-        case 'error':
-          yield { type: 'error', error: new Error(`stream error: ${ev.data.slice(0, 300)}`) };
-          return;
       }
+    } catch (e) {
+      if (req.signal?.aborted) throw e; // 中断穿透保留（loop/server 有 abort 语义）
+      yield { type: 'error', error: e instanceof Error ? e : new Error(String(e)) };
+      return;
     }
 
     yield { type: 'usage', inputTokens, outputTokens };
