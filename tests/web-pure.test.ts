@@ -125,3 +125,23 @@ describe('子代理时间线折叠（M18 blocks）', () => {
     expect(stripTs(fold(frames))).toEqual(stripTs(fold(frames)));
   });
 });
+
+describe('#106 finish 结局渲染（静默死亡修复——聊天区必须能看到结局）', () => {
+  it('error → ❌ 通知，含原始 message', () => {
+    const bs = applyEvent([], { type: 'finish', reason: 'error', message: 'network error: connection reset' } as ServerEvent);
+    expect(bs.at(-1)).toMatchObject({ kind: 'notice' });
+    expect(bs.at(-1)!.kind === 'notice' && bs.at(-1)!.text).toContain('connection reset');
+  });
+  it('max_turns → ⚠️ 轮次上限通知', () => {
+    const bs = applyEvent([], { type: 'finish', reason: 'max_turns' } as ServerEvent);
+    expect(bs.at(-1)!.kind === 'notice' && bs.at(-1)!.text).toContain('轮次上限');
+  });
+  it('aborted → ⏹ 中断通知', () => {
+    const bs = applyEvent([], { type: 'finish', reason: 'aborted' } as ServerEvent);
+    expect(bs.at(-1)!.kind === 'notice' && bs.at(-1)!.text).toContain('中断');
+  });
+  it('正常结束（end）→ 零通知，不占版面', () => {
+    const bs = applyEvent([], { type: 'finish', reason: 'end' } as ServerEvent);
+    expect(bs).toHaveLength(0);
+  });
+});

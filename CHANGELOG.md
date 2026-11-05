@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+### 修复（#106 · provider 流中断全链路静默死亡，用户首次真实使用两次踩中）
+
+- **provider 传输异常不再穿透**（anthropic/openai 双协议）：SSE 流中途断（连接重置/读流异常）转为 `error` **事件**而非 throw——loop 既有的收敛路径随之产出 `finish(reason=error, message)`；signal abort 保留穿透语义
+- **server 异常收口**：catch 里的结尾帧现在 `recordEvent` 进回放缓冲（live 观察者/刷新/补帧都能看到结局）、`console.error` 落日志（此前全静默——排障无据）；abort 与 error 区分（任务状态不再误记）；帧形态统一为 `event:'finish'`（此前 event 名与载荷类型矛盾）
+- **web 聊天区结局可见**：新增 `finish` 渲染——error → ❌ 中断提示（含原始 message，可直接重发）/ max_turns → ⚠️ 轮次上限 / aborted → ⏹ 已中断；回放与实时同构可见（CLI 此前已正确）
+- vitest 107→**113**（双协议「流中途崩→error 事件」golden 用例 + finish 四 reason 渲染用例）
+
 ### 文档（M33 · 12 号文章补遗，#104）
 
 - 「一天七版的下半场」：实测驱动立项的最短闭环（#91→#95 当日贯通）/ 挖生产数据方法论（关闭假需求 + 挖出真缺陷的双面矿）/ 验证预演事故（#99）/ 判别式「验证形态≠部署形态」（#102）/ Docker 挂载语义三连（只读传染·遮蔽·优先级）/ 节奏学补全（批量看来源，跟版看一致性）

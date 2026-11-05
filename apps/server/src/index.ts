@@ -721,11 +721,16 @@ app.post('/api/sessions/:id/messages', async c => {
         await send({ id: String(seq), event: ev.type, data: JSON.stringify(ev) });
       }
     } catch (e) {
-      task.status = 'error';
-      await send({
-        event: 'error',
-        data: JSON.stringify({ type: 'finish', reason: 'error', message: String(e) }),
-      });
+      // #106：异常终止的结尾帧必须进回放缓冲（live 观察者/刷新/补帧都要能看到结局），
+      // 且必须落日志——此前只 send 给当时的写者流，断开即蒸发，全链路静默。
+      const aborted = ac.signal.aborted;
+      const frame = aborted
+        ? { type: 'finish', reason: 'aborted' as const }
+        : { type: 'finish', reason: 'error' as const, message: String(e) };
+      task.status = aborted ? 'aborted' : 'error';
+      if (!aborted) console.error(`[loop] 会话 ${s.id} 运行异常终止:`, e);
+      const seq = s.recordEvent(frame);
+      await send({ id: String(seq), event: 'finish', data: JSON.stringify(frame) });
     } finally {
       task.finishedAt = Date.now();
       store.finishTask(task); // 终态落库

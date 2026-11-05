@@ -98,51 +98,58 @@ export class OpenAIProvider implements Provider {
     const calls = new Map<number, ToolCallState>();
     let stopReason: string = 'unknown';
 
-    for await (const ev of parseSSE(resp.body)) {
-      if (ev.data === '[DONE]') break;
-      let j: Record<string, unknown>;
-      try { j = JSON.parse(ev.data); } catch { continue; }
+    // #106：传输异常不穿透——转 error 事件（与 anthropic.ts 同一教训，loop 统一收敛）
+    try {
+      for await (const ev of parseSSE(resp.body)) {
+        if (ev.data === '[DONE]') break;
+        let j: Record<string, unknown>;
+        try { j = JSON.parse(ev.data); } catch { continue; }
 
-      const usage = j.usage as Record<string, number> | undefined;
-      if (usage) {
-        yield {
-          type: 'usage',
-          inputTokens: usage.prompt_tokens ?? 0,
-          outputTokens: usage.completion_tokens ?? 0,
-        };
-      }
-
-      const choice = (j.choices as Record<string, unknown>[] | undefined)?.[0];
-      if (!choice) continue;
-
-      const delta = choice.delta as Record<string, unknown> | undefined;
-      if (delta) {
-        if (typeof delta.content === 'string' && delta.content) {
-          yield { type: 'text_delta', text: delta.content };
+        const usage = j.usage as Record<string, number> | undefined;
+        if (usage) {
+          yield {
+            type: 'usage',
+            inputTokens: usage.prompt_tokens ?? 0,
+            outputTokens: usage.completion_tokens ?? 0,
+          };
         }
-        // DeepSeek 推理模型的思考通道
-        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-          yield { type: 'thinking_delta', text: delta.reasoning_content };
-        }
-        const tcs = delta.tool_calls as Record<string, unknown>[] | undefined;
-        if (tcs) {
-          for (const tc of tcs) {
-            const i = tc.index as number;
-            let st = calls.get(i);
-            if (!st) { st = { id: '', name: '', argsBuf: '' }; calls.set(i, st); }
-            if (tc.id) st.id = tc.id as string;
-            const fn = tc.function as Record<string, unknown> | undefined;
-            if (fn?.name) st.name = fn.name as string;
-            if (fn?.arguments) st.argsBuf += fn.arguments as string;
+
+        const choice = (j.choices as Record<string, unknown>[] | undefined)?.[0];
+        if (!choice) continue;
+
+        const delta = choice.delta as Record<string, unknown> | undefined;
+        if (delta) {
+          if (typeof delta.content === 'string' && delta.content) {
+            yield { type: 'text_delta', text: delta.content };
+          }
+          // DeepSeek 推理模型的思考通道
+          if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+            yield { type: 'thinking_delta', text: delta.reasoning_content };
+          }
+          const tcs = delta.tool_calls as Record<string, unknown>[] | undefined;
+          if (tcs) {
+            for (const tc of tcs) {
+              const i = tc.index as number;
+              let st = calls.get(i);
+              if (!st) { st = { id: '', name: '', argsBuf: '' }; calls.set(i, st); }
+              if (tc.id) st.id = tc.id as string;
+              const fn = tc.function as Record<string, unknown> | undefined;
+              if (fn?.name) st.name = fn.name as string;
+              if (fn?.arguments) st.argsBuf += fn.arguments as string;
+            }
           }
         }
-      }
 
-      const fr = choice.finish_reason as string | null;
-      if (fr) {
-        stopReason = fr === 'stop' ? 'end' : fr === 'tool_calls' ? 'tool_use'
-          : fr === 'length' ? 'max_tokens' : 'unknown';
+        const fr = choice.finish_reason as string | null;
+        if (fr) {
+          stopReason = fr === 'stop' ? 'end' : fr === 'tool_calls' ? 'tool_use'
+            : fr === 'length' ? 'max_tokens' : 'unknown';
+        }
       }
+    } catch (e) {
+      if (req.signal?.aborted) throw e; // 中断穿透保留
+      yield { type: 'error', error: e instanceof Error ? e : new Error(String(e)) };
+      return;
     }
 
     // 流结束时统一发出聚合好的 tool_use

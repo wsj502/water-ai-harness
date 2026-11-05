@@ -202,3 +202,51 @@ describe('OpenAI 响应侧解析', () => {
     expect(evs.at(-1)).toMatchObject({ type: 'done', stopReason: 'end' });
   });
 });
+
+// ================= #106：传输中断 → error 事件（不穿透 throw） =================
+
+/** 流中途崩：先吐正常帧，再 error（模拟连接中断——读流抛错而非优雅 EOF） */
+function sseCrash(frames: string[]): Response {
+  return new Response(
+    new ReadableStream({
+      async start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode(frames.join('')));
+        await new Promise(r => setTimeout(r, 0));
+        ctrl.error(new TypeError('network error: connection reset'));
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+
+const ONE_USER: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }];
+
+describe('#106 传输中断收敛为 error 事件（静默死亡修复）', () => {
+  it('Anthropic：thinking 流中途断 → 不 throw；已到达帧保留，以 error 收尾（loop 据此产出 finish error）', async () => {
+    mockFetch(() => sseCrash([
+      'event: message_start\ndata: {"message":{"usage":{"input_tokens":10}}}\n\n',
+      'event: content_block_start\ndata: {"index":0,"content_block":{"type":"thinking"}}\n\n',
+      'event: content_block_delta\ndata: {"index":0,"delta":{"type":"thinking_delta","thinking":"想"}}\n\n',
+    ]));
+    const p = new AnthropicProvider({ protocol: 'anthropic', baseUrl: 'https://api.test', apiKey: 'k' });
+    const out = await collect(p.chat({ model: 'glm-4.6', messages: ONE_USER }));
+    expect(out.some(e => e.type === 'thinking_delta')).toBe(true); // 已到达帧不丢
+    const err = out.find(e => e.type === 'error') as { error: Error } | undefined;
+    expect(err).toBeDefined();
+    expect(err!.error.message).toContain('connection reset');      // 原始异常信息可见
+    expect(out.at(-1)!.type).toBe('error');                        // 以 error 收尾，不再 done
+  });
+
+  it('OpenAI：同款语义', async () => {
+    mockFetch(() => sseCrash([
+      'data: {"choices":[{"delta":{"content":"你"}}]}\n\n',
+    ]));
+    const p = new OpenAIProvider({ protocol: 'openai', baseUrl: 'https://api.test/v1', apiKey: 'k' });
+    const out = await collect(p.chat({ model: 'm', messages: ONE_USER }));
+    expect(out.some(e => e.type === 'text_delta')).toBe(true);
+    const err = out.find(e => e.type === 'error') as { error: Error } | undefined;
+    expect(err).toBeDefined();
+    expect(err!.error.message).toContain('connection reset');
+    expect(out.at(-1)!.type).toBe('error');
+  });
+});
