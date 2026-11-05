@@ -6,7 +6,7 @@
 services:
   water:
     build: .
-    image: water:0.11.2
+    image: water:0.11.3
     container_name: water
     ports:
       - "3210:3210"
@@ -16,6 +16,9 @@ services:
       WATER_PROTOCOL: ${WATER_PROTOCOL:-anthropic}
       WATER_BASE_URL: ${WATER_BASE_URL:-https://open.bigmodel.cn/api/anthropic}
       WATER_MODEL: ${WATER_MODEL:-glm-4.6}
+      # #108：输出预算——超长 thinking + 大成品（如整页 HTML）会耗尽默认 8192，
+      # 疑似触发端点断流；16k 起步，可在 .env 覆盖
+      WATER_MAX_TOKENS: ${WATER_MAX_TOKENS:-16384}
     volumes:
       # Agent 的工作区：把宿主机项目目录挂进去
       - ${WATER_WORKSPACE:-./workspace}:/workspace
