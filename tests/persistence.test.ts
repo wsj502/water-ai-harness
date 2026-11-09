@@ -68,3 +68,36 @@ describe('会话持久化（#96：token 累计入库）', () => {
     expect(store2.get('s_legacy')!.tokensIn).toBe(42);
   });
 });
+
+describe('会话持久化（#114：终局 post-mortem 入库）', () => {
+  it('lastFinish 落库，重启（重建 store）后恢复；list 端点透出', () => {
+    const wd = workdir();
+    const store = new SessionStore(new SessionPersistence(wd));
+    const s = store.create({});
+    s.lastFinish = { reason: 'error', message: 'Anthropic 401: 令牌已过期', at: 1731000000000 };
+    store.save(s);
+
+    const store2 = new SessionStore(new SessionPersistence(wd));
+    const restored = store2.get(s.id)!;
+    expect(restored.lastFinish).toEqual({ reason: 'error', message: 'Anthropic 401: 令牌已过期', at: 1731000000000 });
+    expect(store2.list().find(x => x.id === s.id)?.lastFinish?.reason).toBe('error');
+  });
+
+  it('老库（无 last_finish 列）自动迁移：默认 null；正常结束（end）不渲染通知由前端负责', () => {
+    const wd = workdir();
+    const dbDir = path.join(wd, '.water');
+    mkdirSync(dbDir, { recursive: true });
+    const legacy = new DatabaseSync(path.join(dbDir, 'sessions.db'));
+    legacy.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at INTEGER NOT NULL)');
+    legacy.prepare('INSERT INTO sessions (id, title, created_at) VALUES (?, ?, ?)').run('s_legacy', '老会话', 1000);
+    legacy.close();
+
+    const store = new SessionStore(new SessionPersistence(wd));
+    expect(store.get('s_legacy')!.lastFinish).toBeNull();
+
+    store.get('s_legacy')!.lastFinish = { reason: 'aborted', at: 1 };
+    store.save(store.get('s_legacy')!);
+    const store2 = new SessionStore(new SessionPersistence(wd));
+    expect(store2.get('s_legacy')!.lastFinish).toEqual({ reason: 'aborted', at: 1 });
+  });
+});

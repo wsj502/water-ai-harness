@@ -47,6 +47,14 @@ export type UiBlock =
     subTimeline?: SubTimelineTurn[];
   };
 
+/** #106/#114：终局通知文案（end 返回 null 不占版面）——直播折叠与 post-mortem 水合同源 */
+export function finishNoticeText(reason?: string, message?: string): string | null {
+  return reason === 'error'
+    ? `❌ 运行中断${message ? `：${message}` : ''}——可直接重发`
+    : reason === 'max_turns' ? '⚠️ 已达单次运行轮次上限（20 轮）——可继续发消息让它接着做'
+    : reason === 'aborted' ? '⏹ 运行已中断（连接断开超过宽限期）' : null;
+}
+
 /** 把 LoopEvent 应用到块序列（返回新数组，供 React setState） */
 export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
   const next = [...blocks];
@@ -111,10 +119,7 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
     case 'finish': {
       // #106：运行的结局必须在聊天区可见——错误/中断/上限此前零呈现（刷新回放同样要能看到）
       const f = ev as { reason?: string; message?: string };
-      const text = f.reason === 'error'
-        ? `❌ 运行中断${f.message ? `：${f.message}` : ''}——可直接重发`
-        : f.reason === 'max_turns' ? '⚠️ 已达单次运行轮次上限（20 轮）——可继续发消息让它接着做'
-        : f.reason === 'aborted' ? '⏹ 运行已中断（连接断开超过宽限期）' : null;
+      const text = finishNoticeText(f.reason, f.message);
       if (text) next.push({ kind: 'notice', text, ts: Date.now() });
       break;
     }
@@ -217,7 +222,15 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
 }
 
 /** 从服务端历史消息水合成块序列（切换会话时用） */
-export function hydrateBlocks(messages: WMessage[]): UiBlock[] {
+/** 终局 meta 形状（与 api.ts SessionMeta.lastFinish 一致，避免循环依赖局部声明） */
+export type LastFinish = { reason: string; message?: string; at: number } | null | undefined;
+
+/**
+ * 从服务端历史消息水合成块序列（切换会话时用）。
+ * #114：idle 会话的终局帧不在 messages 里（只在当前轮事件缓冲）——由会话 meta 的
+ * lastFinish 补一条通知块，post-mortem 重开也能看到结局（与直播的 finish 折叠同文案）。
+ */
+export function hydrateBlocks(messages: WMessage[], lastFinish: LastFinish = null): UiBlock[] {
   const blocks: UiBlock[] = [];
   const toolIndex = new Map<string, number>();
 
@@ -246,5 +259,8 @@ export function hydrateBlocks(messages: WMessage[]): UiBlock[] {
       }
     }
   }
+  // #114：post-mortem 终局通知（end 无文案不占版面；正常结束的会话零呈现）
+  const finishText = finishNoticeText(lastFinish?.reason, lastFinish?.message);
+  if (finishText) blocks.push({ kind: 'notice', text: finishText, ts: lastFinish?.at });
   return blocks;
 }

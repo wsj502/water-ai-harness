@@ -60,6 +60,12 @@ export class Session {
   /** 会话级 token 累计（侧栏「12.4k tok」的真实数据源） */
   tokensIn = 0;
   tokensOut = 0;
+  /**
+   * #114：最近一次运行的终局（end/error/aborted/max_turns + 原始 message + 时间戳）。
+   * 终局帧只存在于「当前这轮」的事件缓冲（下轮即清），messages 水合不含它——
+   * 持久化到会话 meta，让运行结束后再打开会话也能看到结局（post-mortem 可见）。
+   */
+  lastFinish: { reason: string; message?: string; at: number } | null = null;
   /** 同一时刻只允许一条消息在跑（MVP 约束，避免历史交错） */
   busy = false;
   /**
@@ -197,6 +203,7 @@ export class SessionStore {
       s.workspaceId = r.workspaceId ?? null;
       s.tokensIn = r.tokensIn ?? 0; // #96：token 累计随会话恢复
       s.tokensOut = r.tokensOut ?? 0;
+      s.lastFinish = r.lastFinish ?? null; // #114：终局随会话恢复（post-mortem 可见）
       this.sessions.set(r.id, s);
     }
     // 恢复任务记录（running 态只存在于内存；若落库盘里出现，说明上次进程被杀 → 记为中断）
@@ -252,6 +259,7 @@ export class SessionStore {
         protocol: s.protocol, model: s.model, archived: s.archived,
         workspaceId: s.workspaceId,
         tokensIn: s.tokensIn, tokensOut: s.tokensOut, // #96：token 累计入持久层
+        lastFinish: s.lastFinish, // #114：终局入持久层
       });
     } catch (e) {
       console.error(`[persistence] 会话 ${s.id} 落库失败:`, e instanceof Error ? e.message : e);
@@ -278,6 +286,7 @@ export class SessionStore {
         queued: Math.max(0, s.waiters - (s.busy ? 1 : 0)),
         protocol: s.protocol, model: s.model, archived: s.archived,
         workspaceId: s.workspaceId,
+        lastFinish: s.lastFinish, // #114：post-mortem 终局
       }));
   }
 }

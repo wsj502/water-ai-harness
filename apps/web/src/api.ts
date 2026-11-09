@@ -40,6 +40,8 @@ export interface SessionMeta {
   archived?: boolean;
   /** M7B：绑定工作区（null/缺省 = default） */
   workspaceId?: string | null;
+  /** #114：最近一次运行终局（post-mortem 渲染依据；end 不渲染通知） */
+  lastFinish?: { reason: string; message?: string; at: number } | null;
 }
 
 /** 工作区注册表条目（GET /api/workspaces） */
