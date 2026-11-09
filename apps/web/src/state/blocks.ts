@@ -75,13 +75,33 @@ export function applyEvent(blocks: UiBlock[], ev: ServerEvent): UiBlock[] {
         next.push({ kind: 'thinking', text: ev.text, ts: Date.now() });
       }
       break;
-    case 'tool_pending':
+    case 'tool_pending': {
+      // #113：乱序容错——approval_required 先到时已创建 waiting 占位块，此处复用而非重复建块
+      const placeholder = next.some(b => b.kind === 'tool' && b.call.id === ev.call.id);
+      if (placeholder) {
+        return next.map(b =>
+          b.kind === 'tool' && b.call.id === ev.call.id ? { ...b, call: ev.call } : b);
+      }
       next.push({ kind: 'tool', call: ev.call, status: 'running', ts: Date.now() });
       break;
-    case 'approval_required':
-      return next.map(b =>
-        b.kind === 'tool' && b.call.id === (ev as ApprovalRequiredEvent).callId
-          ? { ...b, status: 'waiting' as ToolStatus } : b);
+    }
+    case 'approval_required': {
+      // #113：server 审批桥同步直发可能使本帧先于 tool_pending 到达——无匹配块时创建
+      // waiting 占位块（与子代理时间线的创建式折叠同构，顺序免疫），后到的 tool_pending
+      // 复用该块。审批卡因此永不落空（live 与回放同受益）。
+      const a = ev as ApprovalRequiredEvent;
+      const existing = next.some(b => b.kind === 'tool' && b.call.id === a.callId);
+      if (existing) {
+        return next.map(b =>
+          b.kind === 'tool' && b.call.id === a.callId ? { ...b, status: 'waiting' as ToolStatus } : b);
+      }
+      next.push({
+        kind: 'tool',
+        call: { type: 'tool_use', id: a.call.id, name: a.call.name, input: a.call.input },
+        status: 'waiting', ts: Date.now(),
+      });
+      return next;
+    }
     case 'tool_approved':
     case 'tool_denied':
     case 'tool_result': {
