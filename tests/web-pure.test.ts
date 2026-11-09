@@ -1,10 +1,11 @@
 /**
  * markdown 解析器（含 XSS 契约）+ 行级 diff（迁移自 scripts/test-web-pure.ts）。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseInline, parseMarkdown } from '../apps/web/src/markdown';
 import { diffStats, lineDiff } from '../apps/web/src/diff';
 import { applyEvent, type UiBlock } from '../apps/web/src/state/blocks';
+import { withStartupRetry } from '../apps/web/src/api';
 import type { ServerEvent } from '../apps/web/src/api';
 import type { ToolUsePart } from '@water/core';
 
@@ -143,5 +144,53 @@ describe('#106 finish 结局渲染（静默死亡修复——聊天区必须能�
   it('正常结束（end）→ 零通知，不占版面', () => {
     const bs = applyEvent([], { type: 'finish', reason: 'end' } as ServerEvent);
     expect(bs).toHaveLength(0);
+  });
+});
+
+describe('#115 启动期指数退避重试（desktop 冷启动竞态）', () => {
+  it('前 N-1 次失败后成功 → 返回值透传、重试次数正确（sidecar 慢启动场景）', async () => {
+    vi.useFakeTimers();
+    try {
+      let n = 0;
+      const fn = async (): Promise<string> => { if (++n < 3) throw new Error('EADDRNOTAVAIL'); return 'up'; };
+      const p = withStartupRetry(fn, 6, 100);
+      const assertion = p.then(v => { expect(v).toBe('up'); expect(n).toBe(3); });
+      await vi.runAllTimersAsync();
+      await assertion;
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('连续失败直到上限 → 抛最后一次错误（彻底降级才给横幅）', async () => {
+    vi.useFakeTimers();
+    try {
+      let n = 0;
+      const fn = async (): Promise<never> => { n++; throw new Error(`boom-${n}`); };
+      const p = withStartupRetry(fn, 3, 50);
+      const assertion = p.catch((e: Error) => { expect(e.message).toBe('boom-3'); expect(n).toBe(3); return 'caught'; });
+      await vi.runAllTimersAsync();
+      expect(await assertion).toBe('caught');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('退避间隔指数增长（100/200/400）', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: number[] = [];
+      let virtualNow = 0;
+      const fn = async (): Promise<string> => {
+        calls.push(virtualNow);
+        if (calls.length < 4) throw new Error('x');
+        return 'ok';
+      };
+      const p = withStartupRetry(fn, 6, 100);
+      const assertion = p.then(v => expect(v).toBe('ok'));
+      for (let i = 0; i < 200 && calls.length < 4; i++) {
+        virtualNow += 50;
+        await vi.advanceTimersByTimeAsync(50);
+      }
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(calls).toEqual([0, 100, 300, 700]); // 立即首发，之后 100/200/400 指数退避
+    } finally { vi.useRealTimers(); }
   });
 });

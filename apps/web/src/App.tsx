@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent, type WorkspaceInfo } from './api';
+import { api, withStartupRetry, type ModelInfo, type ServerConfig, type SessionMeta, type ServerEvent, type WorkspaceInfo } from './api';
 import { applyEvent, argSummary, hydrateBlocks, type UiBlock } from './state/blocks';
 import { Md } from './Md';
 import { diffStats, lineDiff } from './diff';
@@ -57,11 +57,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api.config().then(setConfig).catch(e => setError(String(e)));
-    api.models().then(m => { setModels(m.models); setMockMode(m.mock); }).catch(() => {});
-    api.workspaces().then(setWorkspaces).catch(() => {});
-    refreshSessions(false);
-    api.listPlugins().then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
+    // #115：启动期调用带指数退避重试——desktop 冷启动时前端先于 sidecar 就绪，
+    // 首调失败不再留下永驻横幅/空侧栏（重试至 sidecar bind 成功；彻底失败才降级）
+    withStartupRetry(() => api.config()).then(setConfig).catch(e => setError(String(e)));
+    withStartupRetry(() => api.models()).then(m => { setModels(m.models); setMockMode(m.mock); }).catch(() => {});
+    withStartupRetry(() => api.workspaces()).then(setWorkspaces).catch(() => {});
+    withStartupRetry(() => api.listSessions(false)).then(setSessions).catch(() => {});
+    withStartupRetry(() => api.listPlugins()).then(ps => setPluginCount(ps.filter(p => !p.error).length)).catch(() => {});
   }, []);
 
   // #69：打开/切换会话 → 直达底部
