@@ -253,6 +253,9 @@ export async function* agentLoop(opts: AgentLoopOptions): AsyncGenerator<LoopEve
     const resultParts: Part[] = [];
     const runOne = async (call: ToolUsePart, push: (ev: LoopEvent) => void): Promise<void> => {
       push({ type: 'tool_pending', call });
+      // #113：宏任务让步——server 审批桥在 approve 回调里同步 recordEvent(approval_required)，
+      // 不让泵先把 tool_pending 排给消费者，桥就会抢在「块创建帧」之前入缓冲/SSE（乱序致前端丢帧）。
+      await new Promise<void>(r => setImmediate(r));
 
       const tool = opts.tools.find(t => t.spec.name === call.name);
       if (!tool) {

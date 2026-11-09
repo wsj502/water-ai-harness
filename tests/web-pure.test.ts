@@ -126,6 +126,45 @@ describe('子代理时间线折叠（M18 blocks）', () => {
   });
 });
 
+describe('#113 乱序容错：approval_required 先于 tool_pending（server 审批桥抢序）', () => {
+  const writeCall: ToolUsePart = { type: 'tool_use', id: 'c1', name: 'write', input: { path: 'a.txt' } };
+
+  it('审批帧先到 → 创建 waiting 占位块（审批卡有处渲染）；tool_pending 后到 → 复用不重复', () => {
+    let bs = applyEvent([], { type: 'approval_required', callId: 'c1', call: writeCall });
+    expect(bs).toHaveLength(1);
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'waiting' });
+    bs = applyEvent(bs, { type: 'tool_pending', call: writeCall });
+    expect(bs.filter(b => b.kind === 'tool')).toHaveLength(1);
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'waiting' });
+  });
+
+  it('占位块全生命周期：approved → running、result → done（与正序折叠同构）', () => {
+    let bs: UiBlock[] = [];
+    bs = applyEvent(bs, { type: 'approval_required', callId: 'c1', call: writeCall });
+    bs = applyEvent(bs, { type: 'tool_pending', call: writeCall });
+    bs = applyEvent(bs, { type: 'tool_approved', call: writeCall, scope: 'once' });
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'running' });
+    bs = applyEvent(bs, { type: 'tool_result', call: writeCall, result: '已写入', isError: false, durationMs: 5 });
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'done', result: '已写入' });
+  });
+
+  it('拒绝路径：tool_denied 收拢占位块为 denied', () => {
+    let bs: UiBlock[] = [];
+    bs = applyEvent(bs, { type: 'approval_required', callId: 'c1', call: writeCall });
+    bs = applyEvent(bs, { type: 'tool_pending', call: writeCall });
+    bs = applyEvent(bs, { type: 'tool_denied', call: writeCall });
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'denied' });
+  });
+
+  it('正序（tool_pending → approval_required）行为不变：running → waiting', () => {
+    let bs = applyEvent([], { type: 'tool_pending', call: writeCall });
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'running' });
+    bs = applyEvent(bs, { type: 'approval_required', callId: 'c1', call: writeCall });
+    expect(bs).toHaveLength(1);
+    expect(bs[0]).toMatchObject({ kind: 'tool', status: 'waiting' });
+  });
+});
+
 describe('#106 finish 结局渲染（静默死亡修复——聊天区必须能看到结局）', () => {
   it('error → ❌ 通知，含原始 message', () => {
     const bs = applyEvent([], { type: 'finish', reason: 'error', message: 'network error: connection reset' } as ServerEvent);

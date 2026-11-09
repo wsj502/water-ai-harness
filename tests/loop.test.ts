@@ -111,6 +111,44 @@ describe('Agent Loop 离线闭环', () => {
     expect(seenBeforeRelease.some(e => e.type === 'tool_result' && !e.isError)).toBe(true);
     expect(seenBeforeRelease.at(-1)).toMatchObject({ type: 'finish', reason: 'end' });
   });
+
+  it('#113 审批桥保序：approve 回调触发前 tool_pending 已交付消费者（防 server 桥同步 recordEvent 抢序）', async () => {
+    const messages: WMessage[] = [{ role: 'user', parts: [{ type: 'text', text: '跑命令' }] }];
+    // 记录序列模拟 server 侧的 recordEvent 顺序：桥在 approve 回调里「同步」记录 approval_required，
+    // 消费者逐帧记录 yield 出的事件——修复后 tool_pending 必须先于 approve 回调执行。
+    const order: string[] = [];
+    let releaseApprove!: (d: 'once' | 'session' | 'deny') => void;
+    const gate = new Promise<'once'>(r => { releaseApprove = r; });
+
+    const iter = agentLoop({
+      provider: new MockShellProvider(), model: 'mock', system: 'SYS', messages,
+      tools: builtinTools, permissions: new PermissionEngine({ autoAllowLowRisk: true }),
+      toolCtx: { cwd: process.cwd() }, maxTurns: 5,
+      approve: () => { order.push('approval_required'); return gate; },
+    });
+    const nextWithTimeout = () => Promise.race([
+      iter.next(),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('消费超时（#113）')), 3000)),
+    ]);
+    let pendingDelivered = false;
+    for (let i = 0; i < 10 && !pendingDelivered; i++) {
+      const r = await nextWithTimeout();
+      if (r.done) break;
+      order.push(r.value.type);
+      if (r.value.type === 'tool_pending') {
+        pendingDelivered = true;
+        // tool_pending 已交付后让出一个宏任务拍：若桥已抢序，approval_required 会先于本帧出现在 order
+        await new Promise<void>(r2 => setImmediate(r2));
+      }
+    }
+    expect(pendingDelivered).toBe(true);
+    expect(order.indexOf('tool_pending')).toBeLessThan(order.indexOf('approval_required'));
+    releaseApprove('once');
+    for (;;) {
+      const r = await nextWithTimeout();
+      if (r.done) break;
+    }
+  });
 });
 
 /** 一上来就请求 shell 的 mock */
