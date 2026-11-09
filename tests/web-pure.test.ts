@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseInline, parseMarkdown } from '../apps/web/src/markdown';
 import { diffStats, lineDiff } from '../apps/web/src/diff';
-import { applyEvent, type UiBlock } from '../apps/web/src/state/blocks';
+import { applyEvent, finishNoticeText, hydrateBlocks, type UiBlock } from '../apps/web/src/state/blocks';
 import type { ServerEvent } from '../apps/web/src/api';
 import type { ToolUsePart } from '@water/core';
 
@@ -182,5 +182,30 @@ describe('#106 finish 结局渲染（静默死亡修复——聊天区必须能�
   it('正常结束（end）→ 零通知，不占版面', () => {
     const bs = applyEvent([], { type: 'finish', reason: 'end' } as ServerEvent);
     expect(bs).toHaveLength(0);
+  });
+});
+
+describe('#114 终局 post-mortem 水合（idle 会话重开也可见）', () => {
+  const msgs = [
+    { role: 'user' as const, parts: [{ type: 'text' as const, text: '任务' }] },
+  ];
+
+  it('lastFinish=error → 水合补 ❌ 通知，含原始 message（与直播同文案）', () => {
+    const bs = hydrateBlocks(msgs, { reason: 'error', message: 'connection reset', at: 1 });
+    expect(bs.at(-1)).toMatchObject({ kind: 'notice' });
+    expect(bs.at(-1)!.kind === 'notice' && bs.at(-1)!.text).toContain('connection reset');
+    expect(bs.at(-1)!.kind === 'notice' && bs.at(-1)!.text).toContain('❌');
+  });
+
+  it('lastFinish=aborted → 水合补 ⏹ 通知；end/无终局 → 零呈现', () => {
+    expect(hydrateBlocks(msgs, { reason: 'aborted', at: 1 })).toHaveLength(2); // user + notice
+    expect(hydrateBlocks(msgs, { reason: 'end', at: 1 })).toHaveLength(1); // 仅 user，正常结束不占版面
+    expect(hydrateBlocks(msgs, null)).toHaveLength(1);
+    expect(hydrateBlocks(msgs)).toHaveLength(1); // 老服务端无该字段
+  });
+
+  it('finishNoticeText 与直播折叠同源（同一 reason 出同一文案）', () => {
+    const live = applyEvent([], { type: 'finish', reason: 'error', message: 'X' } as ServerEvent);
+    expect(live.at(-1)!.kind === 'notice' && live.at(-1)!.text).toBe(finishNoticeText('error', 'X'));
   });
 });

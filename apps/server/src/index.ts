@@ -719,6 +719,9 @@ app.post('/api/sessions/:id/messages', async c => {
           task.status = ev.reason === 'end' ? 'done'
             : ev.reason === 'error' ? 'error'
             : ev.reason === 'aborted' ? 'aborted' : 'max_turns';
+          // #114：终局入会话 meta（持久化）——运行结束后再打开也能看到结局
+          const finMsg = (ev as { message?: string }).message;
+          s.lastFinish = { reason: ev.reason, ...(finMsg !== undefined ? { message: finMsg } : {}), at: Date.now() };
         }
         // M3：帧 id = 事件 seq（断线后可经 /events?since= 补帧；M19 断开宽限期内照常入缓冲）
         const seq = s.recordEvent(ev);
@@ -733,6 +736,7 @@ app.post('/api/sessions/:id/messages', async c => {
         : { type: 'finish', reason: 'error' as const, message: String(e) };
       task.status = aborted ? 'aborted' : 'error';
       if (!aborted) console.error(`[loop] 会话 ${s.id} 运行异常终止:`, e);
+      s.lastFinish = { reason: frame.reason, ...('message' in frame && frame.message !== undefined ? { message: frame.message } : {}), at: Date.now() }; // #114：post-mortem 可见
       const seq = s.recordEvent(frame);
       await send({ id: String(seq), event: 'finish', data: JSON.stringify(frame) });
     } finally {

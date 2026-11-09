@@ -138,7 +138,8 @@ export default function App() {
           api.listSessions().then(setSessions).catch(() => {});
         })();
       } else {
-        setBlocks(hydrateBlocks(h.messages));
+        // #114：idle 会话水合 + meta 终局通知（aborted/error/max_turns 重开也可见）
+        setBlocks(hydrateBlocks(h.messages, meta?.lastFinish));
       }
     } catch (e) {
       setBlocks([]);
