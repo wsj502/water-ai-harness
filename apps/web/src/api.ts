@@ -10,6 +10,20 @@ import type { LoopEvent, WMessage } from '@water/core';
 const BASE: string =
   typeof window !== 'undefined' && '__TAURI__' in window ? 'http://127.0.0.1:3210' : '';
 
+/**
+ * #115：启动期调用指数退避重试。desktop 冷启动竞态——前端内嵌秒载、sidecar 尚未
+ * bind 3210，首批 fetch 失败会留下永驻错误横幅甚至空白侧栏（无重试）；浏览器部署
+ * 无此问题（server 先于页面就绪），重试对其只是无害的几毫秒。
+ */
+export async function withStartupRetry<T>(fn: () => Promise<T>, tries = 6, baseMs = 250): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); } catch (e) { lastErr = e; }
+    await new Promise(r => setTimeout(r, baseMs * 2 ** i));
+  }
+  throw lastErr;
+}
+
 export interface ServerConfig {
   protocol: string;
   baseUrl: string;
